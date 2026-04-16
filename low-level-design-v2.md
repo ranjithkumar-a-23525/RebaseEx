@@ -879,7 +879,7 @@ erDiagram
     }
 
     OnDemandPatchRequest {
-        BIGINT REQUEST_ID PK_FK "FK to OnDemandDownloadRequest"
+        BIGINT REQUEST_ID PK "PK + FK to OnDemandDownloadRequest"
         BIGINT PATCH_ID PK
         INTEGER STATUS "0-4 lifecycle states"
         BIGINT COMPLETION_TIME "Epoch ms"
