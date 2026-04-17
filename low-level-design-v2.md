@@ -847,120 +847,116 @@ erDiagram
     %% ── NEW TABLES ────────────────────────────────────────
 
     CentralizedDownloadSettings {
-        BIGINT SETTINGS_ID PK "Always 1 singleton"
-        BOOLEAN CENTRALIZED_DOWNLOAD_ENABLED "Default false"
-        NCHAR500 COMMON_STORE_PATH "Absolute path on SS disk"
-        INTEGER DOWNLOAD_CRITERIA "0=All missing 1=Approved"
-        INTEGER PATCH_DISTRIBUTION_METHOD "0=Probe copies 1=Direct"
-        BOOLEAN FALLBACK_TO_VENDOR "Default false"
-        INTEGER CLEANUP_GRACE_PERIOD_MINUTES "Default 30"
-        INTEGER ON_DEMAND_TIMEOUT_MINUTES "Default 60"
-        BIGINT NGINX_CACHE_SIZE_MB "Default 5120"
-        BIGINT CREATED_TIME "Epoch ms first configured"
-        BIGINT LAST_MODIFIED_TIME "Epoch ms"
-        BIGINT LAST_MODIFIED_BY "FK to user"
+        BIGINT SETTINGS_ID PK
+        BOOLEAN CENTRALIZED_DOWNLOAD_ENABLED
+        NCHAR500 COMMON_STORE_PATH
+        INTEGER DOWNLOAD_CRITERIA
+        INTEGER PATCH_DISTRIBUTION_METHOD
+        BOOLEAN FALLBACK_TO_VENDOR
+        INTEGER CLEANUP_GRACE_PERIOD_MINUTES
+        INTEGER ON_DEMAND_TIMEOUT_MINUTES
+        BIGINT NGINX_CACHE_SIZE_MB
+        BIGINT CREATED_TIME
+        BIGINT LAST_MODIFIED_TIME
+        BIGINT LAST_MODIFIED_BY
     }
 
     PatchStoreLocation {
-        BIGINT PATCH_ID PK
-        INTEGER LANGUAGE_ID "1=English 0=all languages"
-        INTEGER STATUS "0-5 lifecycle states"
-        NCHAR500 FILE_NAME "Physical file name"
-        NCHAR500 WEB_PATH "SS-internal relative URL"
-        BIGINT FILE_SIZE "Bytes"
-        CHAR128 CHECKSUM_VAL "SHA256 hash"
-        CHAR20 CHECKSUM_TYPE "SHA256 or MD5"
-        BIGINT CREATED_TIME "Epoch ms row inserted"
-        BIGINT DOWNLOAD_TIME "Epoch ms download completed"
-        BIGINT LAST_STATUS_CHANGE_TIME "Epoch ms"
-        BIGINT PENDING_DELETE_AT "Epoch ms"
-        INTEGER RETRY_COUNT "Default 0"
-        NCHAR2000 REMARKS "Failure reason"
+        BIGINT PATCHID PK
+        INTEGER LANGUAGEID PK
+        CHAR255 WEBPATH
+        CHAR255 STOREPATH
+        BIGINT PATCH_SIZE
+        CHAR100 STATUS
+        INTEGER STATUS_ID FK
+        BIGINT DOWNLOAD_TIME
+        NCHAR2000 REMARKS
+        NCHAR250 REMARKS_ARGS
+        INTEGER RETRY_COUNT
     }
 
     OnDemandDownloadRequest {
-        BIGINT REQUEST_ID PK "Auto-generated"
-        BIGINT PROBE_ID FK "FK to ProbeDetails"
-        BIGINT COLLECTION_ID "-1 if non-collection"
-        BIGINT REQUEST_TIME "Epoch ms"
-        BIGINT REQUEST_DEADLINE "requestTime plus timeout"
-        INTEGER STATUS "0-4 lifecycle states"
-        BIGINT COMPLETION_TIME "Epoch ms"
-        INTEGER TOTAL_PATCHES "Denormalized counter"
-        INTEGER COMPLETED_PATCHES "Denormalized counter"
-        INTEGER FAILED_PATCHES "Denormalized counter"
+        BIGINT REQUEST_ID PK
+        BIGINT PROBE_ID FK
+        BIGINT COLLECTION_ID
+        BIGINT REQUEST_TIME
+        BIGINT REQUEST_DEADLINE
+        INTEGER STATUS
+        BIGINT COMPLETION_TIME
+        INTEGER TOTAL_PATCHES
+        INTEGER COMPLETED_PATCHES
+        INTEGER FAILED_PATCHES
     }
 
     OnDemandPatchRequest {
-        BIGINT REQUEST_ID PK "FK to OnDemandDownloadRequest"
+        BIGINT REQUEST_ID PK
         BIGINT PATCH_ID PK
-        BIGINT PROBE_ID FK "FK to ProbeDetails"
-        BIGINT COLLECTION_ID "Associated collection"
-        INTEGER LANGUAGE_ID "Language variant for file resolution"
-        INTEGER STATUS "0-4 lifecycle states"
-        BIGINT COMPLETION_TIME "Epoch ms"
-        BOOLEAN EVENT_PUSHED "Default false"
+        BIGINT PROBE_ID FK
+        BIGINT COLLECTION_ID
+        INTEGER LANGUAGE_ID
+        INTEGER STATUS
+        BIGINT COMPLETION_TIME
+        BOOLEAN EVENT_PUSHED
     }
 
     SSRedhatCertDetails {
-        BIGINT ID PK "Auto-generated"
-        NCHAR50 EDITION UK "Server Workstation Desktop"
-        BIGINT SOURCE_PROBE_ID FK "FK to ProbeDetails"
-        CHAR100 KEYSTORE_ALIAS "PKCS12 alias"
-        CHAR50 CLIENT_CERT "client.pem filename"
-        CHAR50 CLIENT_KEY "client-key.pem filename"
-        CHAR50 CA_CERT "ca.pem filename"
-        NCHAR200 ZIP_FILE_NAME "Cert ZIP on disk"
-        TIMESTAMP CERT_EXPIRY "Cert expiry date"
-        BOOLEAN IS_VALID "Default true"
-        BIGINT UPLOAD_TIME "Epoch ms received"
-        BIGINT LAST_SYNCED "Epoch ms last sync"
-        CHAR100 CHECKSUM "ZIP hash for dedup"
+        BIGINT ID PK
+        NCHAR50 EDITION UK
+        BIGINT SOURCE_PROBE_ID FK
+        CHAR100 KEYSTORE_ALIAS
+        CHAR50 CLIENT_CERT
+        CHAR50 CLIENT_KEY
+        CHAR50 CA_CERT
+        NCHAR200 ZIP_FILE_NAME
+        TIMESTAMP CERT_EXPIRY
+        BOOLEAN IS_VALID
+        BIGINT UPLOAD_TIME
+        BIGINT LAST_SYNCED
+        CHAR100 CHECKSUM
     }
 
     SuseProductKeys {
-        BIGINT KEY_ID PK "Auto-generated"
-        BIGINT CUSTOMER_ID FK "FK to CustomerInfo"
-        NCHAR100 OS_EDITION "desktop or server"
-        SCHAR500 PRODUCT_KEY "Encrypted"
-        INTEGER IS_VALID "0=invalid 1=valid"
+        BIGINT KEY_ID PK
+        BIGINT CUSTOMER_ID FK
+        NCHAR100 OS_EDITION
+        SCHAR500 PRODUCT_KEY
+        INTEGER IS_VALID
     }
 
     SuseAuthTokens {
-        BIGINT TOKEN_ID PK "Auto-generated"
-        BIGINT CUSTOMER_ID FK "FK to CustomerInfo"
-        NCHAR500 REPO_NAME "SUSE repo base URL"
-        SCHAR1000 AUTH_TOKEN "Encrypted token"
+        BIGINT TOKEN_ID PK
+        BIGINT CUSTOMER_ID FK
+        NCHAR500 REPO_NAME
+        SCHAR1000 AUTH_TOKEN
     }
 
     PatchKeystoreDetails {
-        CHAR100 ALIAS PK "e.g. patch_keystore_server"
-        NCHAR500 PATH "Directory on disk"
-        SCHAR500 PASSWORD "AES-encrypted"
-        CHAR20 TYPE "Always PKCS12"
+        CHAR100 ALIAS PK
+        NCHAR500 PATH
+        SCHAR500 PASSWORD
+        CHAR20 TYPE
         BIGINT CUSTOMER_ID
     }
 
     %% ── EXISTING TABLES (shown for FK reference only) ─────
     %% Full schema defined in existing data-dictionary-ss.xml
-    %% Only PK columns shown here
 
     ProbeDetails {
-        BIGINT PROBE_ID PK "EXISTING - FK reference only"
-        CHAR250 PROBE_NAME "Probe name"
-        CHAR250 PROBE_DESCRIPTION "nullable"
+        BIGINT PROBE_ID PK
+        CHAR250 PROBE_NAME
+        CHAR250 PROBE_DESCRIPTION
     }
 
     CustomerInfo {
-        BIGINT CUSTOMER_ID PK "EXISTING - FK reference only"
-        NCHAR250 CUSTOMER_NAME "NOT NULL"
-        NCHAR250 CUSTOMER_EMAIL "nullable"
-        NCHAR250 ACCOUNT_HEAD_NAME "default --"
-        CHAR50 TIMEZONE "nullable"
-        BOOLEAN IS_CUSTOM_LOGO_ENABLE "default false"
-        BIGINT ADDED_TIME "default 0"
-        BIGINT UPDATED_TIME "default 0"
-        BIGINT SCOPE "default 1"
+        BIGINT CUSTOMER_ID PK
+        NCHAR250 CUSTOMER_NAME
+        NCHAR250 CUSTOMER_EMAIL
+        NCHAR250 ACCOUNT_HEAD_NAME
+        CHAR50 TIMEZONE
+        BOOLEAN IS_CUSTOM_LOGO_ENABLE
+        BIGINT ADDED_TIME
+        BIGINT UPDATED_TIME
+        BIGINT SCOPE
     }
 
     %% ── RELATIONSHIPS ──────────────────────────────────────
@@ -980,13 +976,13 @@ erDiagram
     %% ── NEW TABLE ──────────────────────────────────────────
 
     CollectionPendingPatches {
-        BIGINT COLLECTION_ID PK "Collection waiting for patch"
-        BIGINT PATCH_ID PK "Patch that must be AVAILABLE"
-        INTEGER LANGUAGE_ID "Language variant"
-        INTEGER STATUS "0=PENDING 1=AVAILABLE 2=FAILED"
-        BIGINT ADDED_TIME "Epoch ms row inserted"
-        BIGINT RESOLVED_TIME "Epoch ms marked success/fail"
-        NCHAR2000 REMARKS "Failure reason if STATUS=2"
+        BIGINT COLLECTION_ID PK
+        BIGINT PATCH_ID PK
+        INTEGER LANGUAGE_ID
+        INTEGER STATUS
+        BIGINT ADDED_TIME
+        BIGINT RESOLVED_TIME
+        NCHAR2000 REMARKS
     }
 
     %% ── EXISTING TABLE (shown for FK reference only) ───────
@@ -994,15 +990,509 @@ erDiagram
     %% Renamed here to avoid visual clash with SS-side table
 
     ProbePatchStoreLocation {
-        BIGINT PATCH_ID PK "EXISTING PatchStoreLocation - FK ref only"
-        INTEGER LANGUAGE_ID PK
-        INTEGER STATUS_ID "Existing statuses"
-        NCHAR500 WEB_PATH "Probe store URL when centralized"
-        NCHAR500 STORE_PATH "Local store path"
+        BIGINT PATCHID PK
+        INTEGER LANGUAGEID PK
+        CHAR255 WEBPATH
+        CHAR255 STOREPATH
+        BIGINT PATCH_SIZE
+        CHAR100 STATUS
+        INTEGER STATUS_ID FK
+        BIGINT DOWNLOAD_TIME
+        NCHAR2000 REMARKS
+        NCHAR250 REMARKS_ARGS
+        INTEGER RETRY_COUNT
     }
 
     %% ── RELATIONSHIPS ──────────────────────────────────────
 
     ProbePatchStoreLocation ||--o{ CollectionPendingPatches : "resolved by patch availability"
 ```
+
+> **Note:** The actual table name on Probe is `PatchStoreLocation` — identical naming to the SS table is intentional (same conceptual role: tracks patch binary availability per host). They live in separate databases and are never joined. The diagram uses `ProbePatchStoreLocation` purely to avoid visual ambiguity in tooling that renders both ER diagrams together.
+
+---
+
+### 2.3 Table Definitions
+
+#### 2.3.1 CentralizedDownloadSettings (SS — New, Singleton)
+
+> Singleton row (`SETTINGS_ID = 1`). Stores the entire centralized download configuration. Seeded with defaults on first startup.
+
+| Column | Type | Default | Nullable | Description |
+|--------|------|---------|----------|-------------|
+| **`SETTINGS_ID`** | BIGINT (PK, auto) | — | NO | Always 1 for singleton |
+| `CENTRALIZED_DOWNLOAD_ENABLED` | BOOLEAN | `false` | NO | Master toggle |
+| `COMMON_STORE_PATH` | NCHAR(500) | — | YES | Absolute path on SS disk |
+| `DOWNLOAD_CRITERIA` | INTEGER | `0` | NO | `0`=All missing, `1`=All approved missing |
+| `PATCH_DISTRIBUTION_METHOD` | INTEGER | `0` | NO | UI-only — no backend effect |
+| `FALLBACK_TO_VENDOR` | BOOLEAN | `false` | NO | Probe falls back to vendor on timeout |
+| `CLEANUP_GRACE_PERIOD_MINUTES` | INTEGER | `30` | NO | Grace period before physical delete |
+| `ON_DEMAND_TIMEOUT_MINUTES` | INTEGER | `60` | NO | Max wait before auto-fallback |
+| `NGINX_CACHE_SIZE_MB` | BIGINT | `5120` | NO | Probe-side Nginx cache size |
+| `CREATED_TIME` | BIGINT | — | NO | Epoch ms first configured |
+| `LAST_MODIFIED_TIME` | BIGINT | `-1` | NO | Epoch ms of last change |
+| `LAST_MODIFIED_BY` | BIGINT | — | YES | User ID of last admin |
+
+---
+
+#### 2.3.2 PatchStoreLocation (SS — Reused from Probe)
+
+> **Reused table** — same structure as the existing Probe-side `PatchStoreLocation` (defined in `data-dictionary.xml`, `BinaryRepository` schema). Added to `data-dictionary-ss.xml`. Tracks per-patch download lifecycle on SS. Both SS and Probe use the same table name in their respective databases — they are never joined.
+>
+> **PK:** Composite `(PATCHID, LANGUAGEID)` — matches the existing Probe table exactly.
+
+| Column | Type | Default | Nullable | Description |
+|--------|------|---------|----------|-------------|
+| **`PATCHID`** | BIGINT (PK) | — | NO | Patch identifier |
+| **`LANGUAGEID`** | INTEGER (PK) | `1` | NO | Language variant (1=English, 0=all languages) |
+| `WEBPATH` | CHAR(255) | — | NO | SS-internal relative URL |
+| `STOREPATH` | CHAR(255) | — | NO | Physical file path on SS disk |
+| `PATCH_SIZE` | BIGINT | `0` | NO | Size in bytes |
+| `STATUS` | CHAR(100) | — | NO | String status (AVAILABLE, DLOAD_FAILED, etc.) |
+| `STATUS_ID` | INTEGER (FK) | `99` | NO | FK → `ConfigStatusDefn.STATUS_ID` |
+| `DOWNLOAD_TIME` | BIGINT | `-1` | NO | Epoch ms when downloaded (-1 = not yet) |
+| `REMARKS` | NCHAR(2000) | — | YES | Failure reason |
+| `REMARKS_ARGS` | NCHAR(250) | — | YES | Format arguments for REMARKS |
+| `RETRY_COUNT` | INTEGER | `0` | NO | Download retry attempts |
+
+**Reconciliation note:** system-design.md §7.1 defined this as a new SS-specific table (`SSPATCHSTORELOCATION`) with different column names (`PATCH_ID`, `FILE_NAME`, `CHECKSUM_VAL`, etc.). This LLD supersedes that — the existing `PatchStoreLocation` structure from `data-dictionary.xml` is reused directly. The `STATUS`/`STATUS_ID` pattern is already established on the Probe side and maps to `ConfigStatusDefn`.
+
+**DDL file:** `data-dictionary-ss.xml`
+
+---
+
+#### 2.3.3 OnDemandDownloadRequest (SS — New)
+
+> One row per on-demand request from a Probe. Tracks overall request lifecycle.
+
+| Column | Type | Default | Nullable | Description |
+|--------|------|---------|----------|-------------|
+| **`REQUEST_ID`** | BIGINT (PK, auto) | — | NO | Auto-generated unique ID |
+| `PROBE_ID` | BIGINT (FK) | — | NO | → `ProbeDetails.PROBE_ID` |
+| `COLLECTION_ID` | BIGINT | `-1` | NO | Collection that triggered it (`-1` if non-collection) |
+| `REQUEST_TIME` | BIGINT | — | NO | Epoch ms when received by SS |
+| `REQUEST_DEADLINE` | BIGINT | — | NO | `REQUEST_TIME + ON_DEMAND_TIMEOUT_MINUTES * 60000` |
+| `STATUS` | INTEGER | `0` | NO | `0`=RECEIVED, `1`=IN_PROGRESS, `2`=COMPLETED, `3`=PARTIALLY_COMPLETED, `4`=FAILED |
+| `COMPLETION_TIME` | BIGINT | — | YES | Epoch ms when all patches resolved |
+| `TOTAL_PATCHES` | INTEGER | `0` | NO | Denormalized — total patches requested |
+| `COMPLETED_PATCHES` | INTEGER | `0` | NO | Denormalized — successfully downloaded |
+| `FAILED_PATCHES` | INTEGER | `0` | NO | Denormalized — failed downloads |
+
+**FK:** `PROBE_ID` → `ProbeDetails.PROBE_ID` (ON DELETE CASCADE)
+
+**Indexes:**
+
+| Index | Columns | Purpose |
+|-------|---------|---------|
+| `IDX_ODDR_PROBE_STATUS` | `(PROBE_ID, STATUS)` | Dedup: active requests per Probe |
+| `IDX_ODDR_COLLECTION` | `(COLLECTION_ID)` | Deployment status API |
+| `IDX_ODDR_DEADLINE` | `(STATUS, REQUEST_DEADLINE)` | Timeout handler |
+
+---
+
+#### 2.3.4 OnDemandPatchRequest (SS — New)
+
+> Bridge table — one row per (request, patch). Per-patch dedup, per-probe event targeting, completion tracking.
+
+| Column | Type | Default | Nullable | Description |
+|--------|------|---------|----------|-------------|
+| **`REQUEST_ID`** | BIGINT (PK, FK) | — | NO | → `OnDemandDownloadRequest.REQUEST_ID` |
+| **`PATCHID`** | BIGINT (PK) | — | NO | Patch being tracked |
+| `PROBE_ID` | BIGINT (FK) | — | NO | → `ProbeDetails.PROBE_ID` (denormalized for event targeting) |
+| `COLLECTION_ID` | BIGINT | `-1` | NO | Associated collection (denormalized for event payload) |
+| `LANGUAGEID` | INTEGER | `1` | NO | Language variant — needed for `.failed` marker path resolution |
+| `STATUS` | INTEGER | `0` | NO | `0`=QUEUED, `1`=DOWNLOADING, `2`=DOWNLOADED, `3`=FAILED, `4`=ALREADY_AVAILABLE |
+| `COMPLETION_TIME` | BIGINT | — | YES | Epoch ms when this patch completed |
+| `EVENT_PUSHED` | BOOLEAN | `false` | NO | Whether `PATCH_STORE_UPDATED` event was sent |
+
+**FK:** `REQUEST_ID` → `OnDemandDownloadRequest.REQUEST_ID` (ON DELETE CASCADE)
+
+**Indexes:**
+
+| Index | Columns | Purpose |
+|-------|---------|---------|
+| `IDX_ODPR_PATCH_STATUS` | `(PATCHID, STATUS)` | Per-patch dedup on incoming on-demand requests |
+| `IDX_ODPR_PATCH_EVENT` | `(PATCHID, EVENT_PUSHED)` | Completion event push |
+
+---
+
+#### 2.3.5 SSRedhatCertDetails (SS — New)
+
+> One row per RedHat edition. Stores certs forwarded from Probes for mTLS downloads from `cdn.redhat.com`.
+
+| Column | Type | Default | Nullable | Description |
+|--------|------|---------|----------|-------------|
+| **`ID`** | BIGINT (PK, auto) | — | NO | Auto-generated |
+| `EDITION` | NCHAR(50) (UNIQUE) | — | NO | `Server` / `Workstation` / `Desktop` |
+| `SOURCE_PROBE_ID` | BIGINT (FK) | — | NO | → `ProbeDetails.PROBE_ID` |
+| `KEYSTORE_ALIAS` | CHAR(100) | — | NO | PKCS12 keystore alias |
+| `CLIENT_CERT` | CHAR(50) | — | NO | client.pem filename |
+| `CLIENT_KEY` | CHAR(50) | — | NO | client-key.pem filename |
+| `CA_CERT` | CHAR(50) | — | NO | ca.pem filename |
+| `ZIP_FILE_NAME` | NCHAR(200) | — | NO | Certificate ZIP on disk |
+| `CERT_EXPIRY` | TIMESTAMP | — | YES | Certificate expiry date |
+| `IS_VALID` | BOOLEAN | `true` | NO | Whether cert is currently usable |
+| `UPLOAD_TIME` | BIGINT | — | NO | Epoch ms when received |
+| `LAST_SYNCED` | BIGINT | `-1` | NO | Epoch ms last validated |
+| `CHECKSUM` | CHAR(100) | — | YES | ZIP hash for dedup |
+
+**FK:** `SOURCE_PROBE_ID` → `ProbeDetails.PROBE_ID` (ON DELETE CASCADE)
+
+---
+
+#### 2.3.6 SuseProductKeys (SS — Reused from Probe)
+
+> Same schema as Probe-side. Added to `data-dictionary-ss.xml`.
+
+| Column | Type | Default | Nullable |
+|--------|------|---------|----------|
+| **`KEY_ID`** | BIGINT (PK, auto) | — | NO |
+| `CUSTOMER_ID` | BIGINT (FK) | — | NO |
+| `OS_EDITION` | NCHAR(100) | — | NO |
+| `PRODUCT_KEY` | SCHAR(500) | — | NO |
+| `IS_VALID` | INTEGER | `0` | NO |
+
+---
+
+#### 2.3.7 SuseAuthTokens (SS — Reused from Probe)
+
+> Same schema as Probe-side. Populated by `SuseAuthtokenTask` on SS.
+
+| Column | Type | Default | Nullable |
+|--------|------|---------|----------|
+| **`TOKEN_ID`** | BIGINT (PK, auto) | — | NO |
+| `CUSTOMER_ID` | BIGINT (FK) | — | NO |
+| `REPO_NAME` | NCHAR(500) | — | NO |
+| `AUTH_TOKEN` | SCHAR(1000) | — | NO |
+
+---
+
+#### 2.3.8 PatchKeystoreDetails (SS — Reused from Probe)
+
+> Same schema as Probe-side. Stores encrypted keystore password for mTLS downloads.
+
+| Column | Type | Default | Nullable |
+|--------|------|---------|----------|
+| **`ALIAS`** | CHAR(100) (PK) | — | NO |
+| `PATH` | NCHAR(500) | — | NO |
+| `PASSWORD` | SCHAR(500) | — | NO |
+| `TYPE` | CHAR(20) | — | NO |
+| `CUSTOMER_ID` | BIGINT | — | NO |
+
+---
+
+#### 2.3.9 PatchStoreLocation (Probe — Existing, No Schema Changes)
+
+> Existing table defined in `data-dictionary.xml` (`BinaryRepository` schema). No schema changes for centralized download. When centralized download is enabled, `WEBPATH` is populated with the Probe's own `/store/` URL — DS/Agents download from this Probe endpoint, which self-proxies to the common store via Nginx.
+
+| Column | Type | Default | Nullable | Description |
+|--------|------|---------|----------|-------------|
+| **`PATCHID`** | BIGINT (PK) | — | NO | Patch identifier |
+| **`LANGUAGEID`** | INTEGER (PK) | `1` | NO | Language variant |
+| `WEBPATH` | CHAR(255) | — | NO | Probe store URL (centralized: `/store/{file}`) |
+| `STOREPATH` | CHAR(255) | — | NO | Physical file path on Probe disk |
+| `PATCH_SIZE` | BIGINT | `0` | NO | Size in bytes |
+| `STATUS` | CHAR(100) | — | NO | String status (AVAILABLE, DLOAD_FAILED, etc.) |
+| `STATUS_ID` | INTEGER (FK) | `99` | NO | FK → `ConfigStatusDefn.STATUS_ID` |
+| `DOWNLOAD_TIME` | BIGINT | `-1` | NO | Epoch ms when downloaded |
+| `REMARKS` | NCHAR(2000) | — | YES | Failure reason |
+| `REMARKS_ARGS` | NCHAR(250) | — | YES | Format arguments for REMARKS |
+| `RETRY_COUNT` | INTEGER | `0` | NO | Download retry attempts |
+
+**Reconciliation note:** system-design.md §7.2 proposed adding a `SOURCE_TYPE` column. This is not adopted — `WEBPATH` value already distinguishes source (`/store/{file}` = centralized, vendor URL = legacy). No query filters by `SOURCE_TYPE`, and adding a column to a high-traffic existing table carries migration risk.
+
+---
+
+#### 2.3.10 CollectionPendingPatches (Probe — New)
+
+> One row per (collection, patch) still pending SS download on this Probe. DB-backed — survives Probe restart.
+
+| Column | Type | Default | Nullable | Description |
+|--------|------|---------|----------|-------------|
+| **`COLLECTION_ID`** | BIGINT (PK) | — | NO | Collection blocked waiting for this patch |
+| **`PATCH_ID`** | BIGINT (PK) | — | NO | Patch that must be AVAILABLE before deployment continues |
+| `LANGUAGE_ID` | INTEGER | `1` | NO | Language variant — for common store path and `.failed` marker resolution |
+| `STATUS` | INTEGER | `0` | NO | `0`=PENDING, `1`=AVAILABLE, `2`=FAILED |
+| `ADDED_TIME` | BIGINT | — | NO | Epoch ms when row inserted |
+| `RESOLVED_TIME` | BIGINT | `-1` | NO | Epoch ms when resolved |
+| `REMARKS` | NCHAR(2000) | — | YES | Failure reason if STATUS=2 |
+
+**Indexes:**
+
+| Index | Columns | Purpose |
+|-------|---------|---------|
+| `IDX_CPP_COLLECTION` | `(COLLECTION_ID, STATUS)` | Per-tick lookup: `WHERE COLLECTION_ID = ? AND STATUS = 0` |
+| `IDX_CPP_STATUS` | `(STATUS)` | Startup recovery: rebuild schedulers for all STATUS=0 rows |
+
+**DDL file:** `data-dictionary-onpremise.xml`
+
+---
+
+#### 2.3.11 OnDemandPollingScheduler (Probe — Not a Table)
+
+> **Not a DB table.** Probe-side in-memory scheduler. Started when a collection enters `WAITING_FOR_SS_DOWNLOAD`. Polls common store via `File.exists()` every 5 minutes for each `STATUS=0` row in `CollectionPendingPatches`.
+
+**Per-tick logic:**
+```
+For each STATUS=0 row WHERE COLLECTION_ID = this.collectionId:
+
+  1. File.exists({commonStorePath}/{fileName})?
+     YES → addToPatchStoreLocation(patchId, langId, AVAILABLE)  // bypass-queue
+           UPDATE CollectionPendingPatches SET STATUS=1
+           firePostDownloadListener(collectionId, patchId)
+
+  2. File.exists({commonStorePath}/.patch-status/{patchId}_{langId}.failed)?
+     YES → UPDATE CollectionPendingPatches SET STATUS=2, REMARKS=reason
+           if FALLBACK_TO_VENDOR → addToPatchDownloadQueue(patchId, vendorOpts)
+
+  3. Neither → STILL DOWNLOADING (wait for next tick)
+```
+
+**Three-layer failure detection:**
+
+| Layer | Mechanism | Latency |
+|-------|-----------|---------|
+| 1 | SS pushes `ON_DEMAND_DOWNLOAD_FAILED` event | ~seconds (fast path; may be lost) |
+| 2 | `.failed` marker found on next poll tick | ≤5 min (primary, reliable) |
+| 3 | `pollCount >= maxPolls` timeout | 30 min (last resort) |
+
+---
+
+### 2.4 Status Enumerations
+
+#### PatchStoreLocation.STATUS (SS and Probe)
+
+> Uses the existing `STATUS`/`STATUS_ID` pattern from `ConfigStatusDefn`. String values match existing Probe constants.
+
+| STATUS (string) | STATUS_ID | Description |
+|-----------------|-----------|-------------|
+| `DLOAD_REQUESTED` | — | Queued for download |
+| `DLOAD_RUNNING` | — | Download in progress |
+| `DLOAD_INPROGRESS` | — | Download in progress (legacy alias) |
+| `AVAILABLE` | — | Downloaded and verified — ready for serving |
+| `DLOAD_FAILED` | — | Download failed after retries |
+| `NOT_AVAILABLE` | — | Marked for deletion or removed |
+
+#### OnDemandDownloadRequest.STATUS
+
+| Value | Name | Description |
+|-------|------|-------------|
+| `0` | RECEIVED | Request received from Probe |
+| `1` | IN_PROGRESS | At least one patch downloading |
+| `2` | COMPLETED | All patches downloaded successfully |
+| `3` | PARTIALLY_COMPLETED | Some succeeded, some failed |
+| `4` | FAILED | All patches failed |
+
+#### OnDemandPatchRequest.STATUS
+
+| Value | Name | Description |
+|-------|------|-------------|
+| `0` | QUEUED | Waiting in download queue |
+| `1` | DOWNLOADING | Download in progress |
+| `2` | DOWNLOADED | Successfully downloaded |
+| `3` | FAILED | Download failed |
+| `4` | ALREADY_AVAILABLE | Already in common store when requested |
+
+#### CollectionPendingPatches.STATUS (Probe)
+
+| Value | Name | Description |
+|-------|------|-------------|
+| `0` | PENDING | Waiting for SS to download |
+| `1` | AVAILABLE | Binary found in common store |
+| `2` | FAILED | `.failed` marker found |
+
+#### New Collection Statuses (Probe)
+
+> Values in the existing `CollectionStatus` table/enum — new constants only, no new table.
+
+| Status Code | Name | Description |
+|-------------|------|-------------|
+| `502` | WAITING_FOR_SS_DOWNLOAD | All patches pending SS download |
+| `503` | PARTIALLY_DEPLOYED | Some patches deployed; remaining pending SS |
+
+---
+
+### 2.5 Probe-Side DB Params (Cached from SS)
+
+> Cached via `SyMUtil.updateSyMParameter()` when `CENTRALIZED_DL_SETTINGS_CHANGED` event arrives. Live in existing `SyMParameter` table.
+
+| Param Key | Source Column | Type |
+|-----------|--------------|------|
+| `CentralizedDownloadEnabled` | `CENTRALIZED_DOWNLOAD_ENABLED` | boolean |
+| `FallbackToVendor` | `FALLBACK_TO_VENDOR` | boolean |
+| `OnDemandTimeoutMinutes` | `ON_DEMAND_TIMEOUT_MINUTES` | int |
+| `NginxCacheSizeMB` | `NGINX_CACHE_SIZE_MB` | long |
+| `DownloadCriteria` | `DOWNLOAD_CRITERIA` | int |
+
+---
+
+### 2.6 Table Summary — New vs Reused
+
+| Table | Location | Type | DDL File |
+|-------|----------|------|----------|
+| `CentralizedDownloadSettings` | SS | **New** | `data-dictionary-ss.xml` |
+| `PatchStoreLocation` | SS | **Reused from Probe** | Add same `<table>` to `data-dictionary-ss.xml` |
+| `OnDemandDownloadRequest` | SS | **New** | `data-dictionary-ss.xml` |
+| `OnDemandPatchRequest` | SS | **New** | `data-dictionary-ss.xml` |
+| `SSRedhatCertDetails` | SS | **New** | `data-dictionary-ss.xml` |
+| `SuseProductKeys` | SS | **Reused from Probe** | Add same `<table>` to `data-dictionary-ss.xml` |
+| `SuseAuthTokens` | SS | **Reused from Probe** | Add same `<table>` to `data-dictionary-ss.xml` |
+| `PatchKeystoreDetails` | SS | **Reused from Probe** | Add same `<table>` to `data-dictionary-ss.xml` |
+| `CollectionPendingPatches` | Probe | **New** | `data-dictionary-onpremise.xml` |
+| `PatchStoreLocation` | Probe | **Existing (no changes)** | — |
+| `ProbeDetails` | SS | **Existing (FK reference only)** | — |
+| `CustomerInfo` | SS | **Existing (FK reference only)** | — |
+
+---
+
+### 2.7 Design Decisions Log
+
+| # | Discrepancy | system-design.md says | This LLD says | Rationale |
+|---|-------------|----------------------|---------------|-----------|
+| 1 | **PatchStoreLocation columns (SS)** | New table `SSPATCHSTORELOCATION` with columns `PATCH_ID`, `FILE_NAME`, `CHECKSUM_VAL`, etc. (§7.1) | **Reused existing `PatchStoreLocation` schema** (`PATCHID`, `LANGUAGEID`, `WEBPATH`, `STOREPATH`, `STATUS`, `STATUS_ID`, etc.) | Same table structure as Probe — verified from `data-dictionary.xml`. Reusing avoids a parallel schema and allows the same DAO base class. `STATUS`/`STATUS_ID` pattern maps to existing `ConfigStatusDefn`. |
+| 2 | **PatchStoreLocation PK** | Composite `(PATCH_ID, LANGUAGE_ID)` (§7.1) | Composite `(PATCHID, LANGUAGEID)` | Matches actual Probe column names exactly. |
+| 3 | **COMMON_STORE_URL column** | Present in settings (§7.1) | Omitted | Per-patch URL in `WEBPATH`. Server base URL from config file. |
+| 4 | **DOWNLOAD_MISSING_FORCED** | Present, always `true` (§7.1) | Removed | Dead schema — invariant enforced in code. |
+| 5 | **REQUEST_DEADLINE** | Present in `OnDemandDownloadRequest` (§7.1) | **Added** | Timeout handler needs it. Frozen at request time. |
+| 6 | **OnDemandPatchRequest.PROBE_ID, COLLECTION_ID** | Present (§7.1) | **Added** | Event push logic needs PROBE_ID without JOIN on hot path. |
+| 7 | **OnDemandPatchRequest.LANGUAGEID** | Not specified | **Added** | Needed for `.failed` marker path: `{patchId}_{langId}.failed`. |
+| 8 | **PATCHSTORELOCATION.SOURCE_TYPE** | Add column (§7.2) | No change | `WEBPATH` already distinguishes source. Migration risk outweighs informational value. |
+| 9 | **CollectionPendingPatches location** | New Probe table (§7.1) | **Restored on Probe** | Earlier drafts incorrectly placed on SS. Lives on Probe's own DB — no `PROBE_ID` needed. |
+| 10 | **SSRedhatCertDetails.LAST_SYNCED** | Present (§7.1) | **Added** | Operational monitoring. |
+| 11 | **CollectionPatchAvailabilityScheduler (SS side)** | Not in system-design | **Renamed `OnDemandPollingScheduler`; placed on Probe** | Not a DB table. Not on SS. Probe polls common store via `File.exists()`. |
+
+---
+
+## 3. Meta File Structures
+
+### 3.1 Common Store Directory Layout
+
+```
+{ss_common_storedir}/                              (e.g., F:\PatchStore)
+|
+|-- .ss-store-sentinel
+|-- .probe-{probeId}-ack
+|
+|-- KB5001234.msu
+|-- 400009-mpam-fe-defender-x64.exe
+|-- 320015-googlechromestandalone64-134.0.msi
+|
+|-- office/
+|   |-- {patchId}/
+|       |-- setup.exe
+|       |-- data/
+|
+|-- linux/
+|   |-- redhat-dependencies/
+|   |-- ubuntu-dependencies/
+|   |-- suse-dependencies/
+|   |-- debian-dependencies/
+|   |-- redhat/dependency/
+|   |   |-- product-dep-101.xml
+|   |   |-- ProdDepMetaInfo.xml
+|   |-- ubuntu/dependency/
+|   |-- suse/dependency/
+|   |-- debian/dependency/
+|
+|-- deleted-patches/
+|   |-- windows/
+|   |   |-- deleted-patches.xml
+|   |-- mac/
+|   |   |-- deleted-patches.xml
+|   |-- linux/
+|       |-- deleted-patches.xml
+|       |-- deleted-dep-packages.xml
+|
+|-- .patch-status/
+    |-- 102_1.failed
+    |-- 205_3.failed
+```
+
+### 3.2 Meta Files Location (client-data)
+
+```
+{ServerDir}/webapps/DesktopCentral/client-data/patch-resources/
+|
+|-- patch-products.zip
+|-- windows/download/
+|   |-- Product-205.xml
+|   |-- Product-1373.xml
+|-- mac/download/
+|   |-- Product-{id}.xml
+|-- linux/
+    |-- ubuntu/dependency/
+    |   |-- product-dep-300180.xml
+    |   |-- proddepmetainfo.xml
+    |-- redhat/dependency/
+    |-- suse/dependency/
+```
+
+### 3.3 XML Schemas & Samples
+
+#### 3.3.1 deleted-patches.xml
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<DELETEDFROMSTORE>
+    <DeletedPatch patchid="102" languageid="1" deletion_time="1773896890671"/>
+    <DeletedPatch patchid="205" languageid="3" deletion_time="1773897000000"/>
+</DELETEDFROMSTORE>
+```
+
+#### 3.3.2 deleted-dep-packages.xml
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<DELETEDDEPENDENCIESFROMSTORE>
+    <DeletedPackage package_id="15" product_id="300180"
+      package_name="old-package_1.0_amd64.deb" deletion_time="1773897100000"/>
+</DELETEDDEPENDENCIESFROMSTORE>
+```
+
+#### 3.3.3 Per-Patch Failure Markers (.failed files)
+
+**Location:** `{commonStore}/.patch-status/{patchId}_{languageId}.failed`  
+**Content:** Plain text failure reason.
+
+| Check | Condition | Meaning |
+|-------|-----------|---------|
+| 1 | `File.exists(commonStorePath + fileName)` = true | **SUCCESS** |
+| 2 | `File.exists(commonStorePath + ".patch-status/" + patchId + "_" + langId + ".failed")` = true | **FAILED** |
+| 3 | Neither | **STILL DOWNLOADING** |
+
+### 3.4 File Naming Conventions
+
+| File Type | Pattern | Location |
+|-----------|---------|----------|
+| Regular patch | `{fileName}` | `{commonStore}/` |
+| Common URL patch | `{patchId}-{fileName}` | `{commonStore}/` |
+| Office Click-to-Run | `{patchId}/` (directory) | `{commonStore}/office/` |
+| Linux RPM/DEB dependency | `{packageName}.rpm/.deb` | `{commonStore}/linux/{flavor}-dependencies/` |
+| Dependency meta | `product-dep-{productId}.xml` | `{commonStore}/linux/{flavor}/dependency/` |
+| Dependency index | `ProdDepMetaInfo.xml` | `{commonStore}/linux/{flavor}/dependency/` |
+| Deleted patches meta | `deleted-patches.xml` | `{commonStore}/deleted-patches/{platform}/` |
+| Deleted deps meta | `deleted-dep-packages.xml` | `{commonStore}/deleted-patches/linux/` |
+| Sentinel file | `.ss-store-sentinel` | `{commonStore}/` |
+| Probe ack file | `.probe-{probeId}-ack` | `{commonStore}/` |
+| Failure marker | `{patchId}_{languageId}.failed` | `{commonStore}/.patch-status/` |
+
+### 3.5 What Lives Where — Summary
+
+#### In the Common Store (all Probes have file-level access)
+
+| Content | Format | Written By | Read By |
+|---------|--------|-----------|---------|
+| Patch binaries | Binary | SS `SSPatchDownloadService` | Probe Nginx |
+| Linux dependency meta XMLs | XML | SS `SSLinuxProductXMLGenerationTask` | Probe |
+| Deleted-patches meta XMLs | XML | SS `DeferredCleanupTask` | Probe |
+| Per-patch failure markers | Plain text | SS (on download failure) | Probe polling scheduler |
+| Sentinel + ack files | Empty | SS / Probe | SS |
+
+#### NOT in the Common Store (per-Probe, generated locally)
+
+| Content | Why Not Shared |
+|---------|----------------|
+| `patch-products.zip` | Each Probe generates from local DB — different `PATCHSTORELOCATION` per Probe |
+| `Product-{id}.xml` | Contains Probe-specific `WEBPATH` / `EXTERNAL_DOWNLOAD_URL` |
+| `globalmetadata.xml` | Per-Probe sync timestamps |
 
