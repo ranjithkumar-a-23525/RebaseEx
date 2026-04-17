@@ -838,7 +838,9 @@ SS: SummaryEventDataHandler.storeEventData(eventCode, isAllProbes, reqJSON)
 
 > **Reconciliation note:** This schema is the **source of truth** â€” it reconciles discrepancies between `system-design.md` (conceptual spec) and the original `low-level-design.md` (initial technical spec). Where the two disagree, this document records the decision and rationale.
 
-### 2.1 ER Diagram â€” SS Tables
+### 2.1 ER Diagram â€" SS Tables
+
+> **Note:** `ProbeDetails` and `CustomerInfo` are **existing tables** — included here only to show FK relationships. Their full schemas are not redefined; only PK columns used as FK targets are shown.
 
 ```mermaid
 erDiagram
@@ -939,12 +941,12 @@ erDiagram
     }
 
     ProbeDetails {
-        BIGINT PROBE_ID PK
-        NCHAR PROBE_NAME
+        BIGINT PROBE_ID PK "EXISTING TABLE - shown for FK reference only"
+        NCHAR PROBE_NAME "Partial columns shown"
     }
 
     CustomerInfo {
-        BIGINT CUSTOMER_ID PK
+        BIGINT CUSTOMER_ID PK "EXISTING TABLE - shown for FK reference only"
     }
 
     OnDemandDownloadRequest ||--o{ OnDemandPatchRequest : "has patches"
@@ -1366,6 +1368,8 @@ For each STATUS=0 row in CollectionPendingPatches WHERE COLLECTION_ID = this.col
 | `PatchKeystoreDetails` | SS | **Reused from Probe** | Add same `<table>` to `data-dictionary-ss.xml` |
 | `CollectionPendingPatches` | Probe | **New** | `data-dictionary-onpremise.xml` |
 | `PatchStoreLocation` | Probe | **Existing (no changes)** | â€" |
+| `ProbeDetails` | SS | **Existing (FK reference only)** | â€" |
+| `CustomerInfo` | SS | **Existing (FK reference only)** | â€" |
 
 ### 2.7 Design Decisions Log
 
