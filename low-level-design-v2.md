@@ -211,30 +211,22 @@ Probe requests priority download of missing patches for a deployment. SS dedup-c
 
 ```json
 {
-    "requestId": 5678,
     "accepted": [101, 103],
-    "alreadyAvailable": [102],
-    "estimatedTimeMinutes": 5
+    "alreadyAvailable": [102]
 }
 ```
 
 | Response Field | Description |
 |----------------|-------------|
-| `requestId` | Auto-generated ID in `OnDemandDownloadRequest` table |
-| `accepted` | Patch IDs queued for priority download (not yet in common store) |
+| `accepted` | Patch IDs bumped to priority in the SS download queue (not yet in common store) |
 | `alreadyAvailable` | Patch IDs already `STATUS=AVAILABLE` in `PatchStoreLocation` (SS) |
-| `estimatedTimeMinutes` | Rough ETA based on queue depth and avg download time |
-
 **SS processing:**
-1. Check `PatchStoreLocation` (SS) â†’ split `accepted` vs `alreadyAvailable`
-2. Build `DownloadOptions` with `collectionId` â†’ `calculatePriority()` returns `true` â†’ queued ahead of bulk
-3. Insert into `OnDemandDownloadRequest` + `OnDemandPatchRequest` (per-patch dedup)
-4. After each patch download completes or fails:
-   - Update `PatchStoreLocation` (SS) (`STATUS = AVAILABLE` or `FAILED`)
-   - On failure: write `.patch-status/{patchId}_{langId}.failed` marker
-   - Push `PATCH_STORE_UPDATED` or `ON_DEMAND_DOWNLOAD_FAILED` event to Probe
-
----
+1. Check `PatchStoreLocation` (SS) → split `accepted` vs `alreadyAvailable`
+2. For `accepted`: build `DownloadOptions` with `collectionId` → `calculatePriority()` returns `true` → bumped ahead of bulk in `SSPatchDownloadService` in-memory queue
+3. **No tracking rows written** -- SS does not persist the request to any table
+4. After each patch download completes or fails, SS updates `PatchStoreLocation` (SS) (`STATUS = AVAILABLE` or `DLOAD_FAILED`) and writes `.patch-status/{patchId}_{langId}.failed` marker on failure
+5. Probe's `OnDemandPollingScheduler` discovers completion/failure autonomously via file-system checks -- no event push required
+> **Design note (2026-04-17):** `OnDemandDownloadRequest` and `OnDemandPatchRequest` tables are **eliminated**. Lifecycle tracking was removed when on-demand patch counts were dropped from the UI and the event-push model was replaced by the Probe-side polling scheduler. Status is authoritative in `PatchStoreLocation (SS)` + `.failed` markers. Timeout is enforced on the Probe via `CollectionPendingPatches.ADDED_TIME` + `ON_DEMAND_TIMEOUT_MINUTES`.---
 
 #### POST `/dcapi/centralizedDownload/dependencyPackages`
 
@@ -761,29 +753,6 @@ SS: SummaryEventDataHandler.storeEventData(eventCode, isAllProbes, reqJSON)
 
 ---
 
-#### Event: `ON_DEMAND_DOWNLOAD_FAILED`
-
-| Aspect | Detail |
-|--------|--------|
-| **Direction** | SS â†’ Specific Probe(s) |
-| **Trigger** | On-demand download fails after 3 retries |
-| **Purpose** | Probe falls back to vendor (if enabled) or marks collection as `DOWNLOAD_FAILED` |
-
-**Payload:**
-
-```json
-{
-    "eventCode": "ON_DEMAND_DOWNLOAD_FAILED",
-    "patchIds": [101],
-    "collectionId": 12345,
-    "probeId": 1001,
-    "failureReason": "Checksum mismatch after 3 retries",
-    "timestamp": 1740000600000
-}
-```
-
----
-
 #### Event: `CENTRALIZED_DL_SETTINGS_CHANGED`
 
 | Aspect | Detail |
@@ -875,30 +844,6 @@ erDiagram
         INTEGER RETRY_COUNT
     }
 
-    OnDemandDownloadRequest {
-        BIGINT REQUEST_ID PK
-        BIGINT PROBE_ID FK
-        BIGINT COLLECTION_ID
-        BIGINT REQUEST_TIME
-        BIGINT REQUEST_DEADLINE
-        INTEGER STATUS
-        BIGINT COMPLETION_TIME
-        INTEGER TOTAL_PATCHES
-        INTEGER COMPLETED_PATCHES
-        INTEGER FAILED_PATCHES
-    }
-
-    OnDemandPatchRequest {
-        BIGINT REQUEST_ID PK
-        BIGINT PATCH_ID PK
-        BIGINT PROBE_ID FK
-        BIGINT COLLECTION_ID
-        INTEGER LANGUAGE_ID
-        INTEGER STATUS
-        BIGINT COMPLETION_TIME
-        BOOLEAN EVENT_PUSHED
-    }
-
     SSRedhatCertDetails {
         BIGINT ID PK
         NCHAR50 EDITION UK
@@ -961,12 +906,22 @@ erDiagram
 
     %% ── RELATIONSHIPS ──────────────────────────────────────
 
-    OnDemandDownloadRequest ||--o{ OnDemandPatchRequest : "has patches"
-    ProbeDetails ||--o{ OnDemandDownloadRequest : "sends requests"
-    ProbeDetails ||--o{ OnDemandPatchRequest : "tracks per-probe"
     ProbeDetails ||--o{ SSRedhatCertDetails : "forwards certs"
     CustomerInfo ||--o{ SuseProductKeys : "owns keys"
-    CustomerInfo ||--o{ SuseAuthTokens : "owns tokens"
+    CustomerInfo ||--o{ SuseAuthTokens : "owns tokens"    %% ── PROBE-SIDE TABLE (logical cross-system reference — no shared DB) ─────
+    %% CollectionPendingPatches lives on Probe DB. Listed here because
+    %% PatchStoreLocation (SS) STATUS=AVAILABLE is the direct trigger that
+    %% resolves rows in this table on the Probe side.
+    CollectionPendingPatches {
+        BIGINT COLLECTION_ID PK
+        BIGINT PATCH_ID PK
+        INTEGER LANGUAGE_ID
+        INTEGER STATUS
+        BIGINT ADDED_TIME
+        BIGINT RESOLVED_TIME
+        NCHAR2000 REMARKS
+    }
+    PatchStoreLocation }o--|| CollectionPendingPatches : "AVAILABLE resolves PENDING (cross-system)"
 ```
 
 ### 2.2 ER Diagram â€” Probe Tables
@@ -1058,61 +1013,6 @@ erDiagram
 **Reconciliation note:** system-design.md §7.1 defined this as a new SS-specific table (`SSPATCHSTORELOCATION`) with different column names (`PATCH_ID`, `FILE_NAME`, `CHECKSUM_VAL`, etc.). This LLD supersedes that — the existing `PatchStoreLocation` structure from `data-dictionary.xml` is reused directly. The `STATUS`/`STATUS_ID` pattern is already established on the Probe side and maps to `ConfigStatusDefn`.
 
 **DDL file:** `data-dictionary-ss.xml`
-
----
-
-#### 2.3.3 OnDemandDownloadRequest (SS — New)
-
-> One row per on-demand request from a Probe. Tracks overall request lifecycle.
-
-| Column | Type | Default | Nullable | Description |
-|--------|------|---------|----------|-------------|
-| **`REQUEST_ID`** | BIGINT (PK, auto) | — | NO | Auto-generated unique ID |
-| `PROBE_ID` | BIGINT (FK) | — | NO | → `ProbeDetails.PROBE_ID` |
-| `COLLECTION_ID` | BIGINT | `-1` | NO | Collection that triggered it (`-1` if non-collection) |
-| `REQUEST_TIME` | BIGINT | — | NO | Epoch ms when received by SS |
-| `REQUEST_DEADLINE` | BIGINT | — | NO | `REQUEST_TIME + ON_DEMAND_TIMEOUT_MINUTES * 60000` |
-| `STATUS` | INTEGER | `0` | NO | `0`=RECEIVED, `1`=IN_PROGRESS, `2`=COMPLETED, `3`=PARTIALLY_COMPLETED, `4`=FAILED |
-| `COMPLETION_TIME` | BIGINT | — | YES | Epoch ms when all patches resolved |
-| `TOTAL_PATCHES` | INTEGER | `0` | NO | Denormalized — total patches requested |
-| `COMPLETED_PATCHES` | INTEGER | `0` | NO | Denormalized — successfully downloaded |
-| `FAILED_PATCHES` | INTEGER | `0` | NO | Denormalized — failed downloads |
-
-**FK:** `PROBE_ID` → `ProbeDetails.PROBE_ID` (ON DELETE CASCADE)
-
-**Indexes:**
-
-| Index | Columns | Purpose |
-|-------|---------|---------|
-| `IDX_ODDR_PROBE_STATUS` | `(PROBE_ID, STATUS)` | Dedup: active requests per Probe |
-| `IDX_ODDR_COLLECTION` | `(COLLECTION_ID)` | Deployment status API |
-| `IDX_ODDR_DEADLINE` | `(STATUS, REQUEST_DEADLINE)` | Timeout handler |
-
----
-
-#### 2.3.4 OnDemandPatchRequest (SS — New)
-
-> Bridge table — one row per (request, patch). Per-patch dedup, per-probe event targeting, completion tracking.
-
-| Column | Type | Default | Nullable | Description |
-|--------|------|---------|----------|-------------|
-| **`REQUEST_ID`** | BIGINT (PK, FK) | — | NO | → `OnDemandDownloadRequest.REQUEST_ID` |
-| **`PATCHID`** | BIGINT (PK) | — | NO | Patch being tracked |
-| `PROBE_ID` | BIGINT (FK) | — | NO | → `ProbeDetails.PROBE_ID` (denormalized for event targeting) |
-| `COLLECTION_ID` | BIGINT | `-1` | NO | Associated collection (denormalized for event payload) |
-| `LANGUAGEID` | INTEGER | `1` | NO | Language variant — needed for `.failed` marker path resolution |
-| `STATUS` | INTEGER | `0` | NO | `0`=QUEUED, `1`=DOWNLOADING, `2`=DOWNLOADED, `3`=FAILED, `4`=ALREADY_AVAILABLE |
-| `COMPLETION_TIME` | BIGINT | — | YES | Epoch ms when this patch completed |
-| `EVENT_PUSHED` | BOOLEAN | `false` | NO | Whether `PATCH_STORE_UPDATED` event was sent |
-
-**FK:** `REQUEST_ID` → `OnDemandDownloadRequest.REQUEST_ID` (ON DELETE CASCADE)
-
-**Indexes:**
-
-| Index | Columns | Purpose |
-|-------|---------|---------|
-| `IDX_ODPR_PATCH_STATUS` | `(PATCHID, STATUS)` | Per-patch dedup on incoming on-demand requests |
-| `IDX_ODPR_PATCH_EVENT` | `(PATCHID, EVENT_PUSHED)` | Completion event push |
 
 ---
 
@@ -1248,13 +1148,11 @@ For each STATUS=0 row WHERE COLLECTION_ID = this.collectionId:
   3. Neither → STILL DOWNLOADING (wait for next tick)
 ```
 
-**Three-layer failure detection:**
-
+**Two-layer failure detection (scheduler-driven):**
 | Layer | Mechanism | Latency |
 |-------|-----------|---------|
-| 1 | SS pushes `ON_DEMAND_DOWNLOAD_FAILED` event | ~seconds (fast path; may be lost) |
-| 2 | `.failed` marker found on next poll tick | ≤5 min (primary, reliable) |
-| 3 | `pollCount >= maxPolls` timeout | 30 min (last resort) |
+| 1 | `.failed` marker found on next poll tick |  min (primary, reliable) |
+| 2 | `pollCount >= maxPolls` timeout (derived from `CollectionPendingPatches.ADDED_TIME` + `ON_DEMAND_TIMEOUT_MINUTES`) | 30 min (last resort) |
 
 ---
 
@@ -1272,26 +1170,6 @@ For each STATUS=0 row WHERE COLLECTION_ID = this.collectionId:
 | `AVAILABLE` | — | Downloaded and verified — ready for serving |
 | `DLOAD_FAILED` | — | Download failed after retries |
 | `NOT_AVAILABLE` | — | Marked for deletion or removed |
-
-#### OnDemandDownloadRequest.STATUS
-
-| Value | Name | Description |
-|-------|------|-------------|
-| `0` | RECEIVED | Request received from Probe |
-| `1` | IN_PROGRESS | At least one patch downloading |
-| `2` | COMPLETED | All patches downloaded successfully |
-| `3` | PARTIALLY_COMPLETED | Some succeeded, some failed |
-| `4` | FAILED | All patches failed |
-
-#### OnDemandPatchRequest.STATUS
-
-| Value | Name | Description |
-|-------|------|-------------|
-| `0` | QUEUED | Waiting in download queue |
-| `1` | DOWNLOADING | Download in progress |
-| `2` | DOWNLOADED | Successfully downloaded |
-| `3` | FAILED | Download failed |
-| `4` | ALREADY_AVAILABLE | Already in common store when requested |
 
 #### CollectionPendingPatches.STATUS (Probe)
 
@@ -1332,8 +1210,6 @@ For each STATUS=0 row WHERE COLLECTION_ID = this.collectionId:
 |-------|----------|------|----------|
 | `CentralizedDownloadSettings` | SS | **New** | `data-dictionary-ss.xml` |
 | `PatchStoreLocation` | SS | **Reused from Probe** | Add same `<table>` to `data-dictionary-ss.xml` |
-| `OnDemandDownloadRequest` | SS | **New** | `data-dictionary-ss.xml` |
-| `OnDemandPatchRequest` | SS | **New** | `data-dictionary-ss.xml` |
 | `SSRedhatCertDetails` | SS | **New** | `data-dictionary-ss.xml` |
 | `SuseProductKeys` | SS | **Reused from Probe** | Add same `<table>` to `data-dictionary-ss.xml` |
 | `SuseAuthTokens` | SS | **Reused from Probe** | Add same `<table>` to `data-dictionary-ss.xml` |
@@ -1360,6 +1236,7 @@ For each STATUS=0 row WHERE COLLECTION_ID = this.collectionId:
 | 9 | **CollectionPendingPatches location** | New Probe table (§7.1) | **Restored on Probe** | Earlier drafts incorrectly placed on SS. Lives on Probe's own DB — no `PROBE_ID` needed. |
 | 10 | **SSRedhatCertDetails.LAST_SYNCED** | Present (§7.1) | **Added** | Operational monitoring. |
 | 11 | **CollectionPatchAvailabilityScheduler (SS side)** | Not in system-design | **Renamed `OnDemandPollingScheduler`; placed on Probe** | Not a DB table. Not on SS. Probe polls common store via `File.exists()`. |
+| 12 | **OnDemandDownloadRequest + OnDemandPatchRequest tables** | Present (§7.1) | **Eliminated (2026-04-17)** | On-demand patch counts removed from UI; event-push model replaced by Probe-side polling scheduler. Status is authoritative in `PatchStoreLocation (SS)` + `.failed` markers. Timeout enforced Probe-side via `CollectionPendingPatches.ADDED_TIME`. Dedup via `PatchStoreLocation.STATUS` check. |
 
 ---
 
