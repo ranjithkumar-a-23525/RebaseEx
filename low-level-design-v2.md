@@ -908,7 +908,9 @@ erDiagram
 
     ProbeDetails ||--o{ SSRedhatCertDetails : "forwards certs"
     CustomerInfo ||--o{ SuseProductKeys : "owns keys"
-    CustomerInfo ||--o{ SuseAuthTokens : "owns tokens"    %% ── PROBE-SIDE TABLE (logical cross-system reference — no shared DB) ─────
+    CustomerInfo ||--o{ SuseAuthTokens : "owns tokens"
+
+    %% ── PROBE-SIDE TABLE (logical cross-system reference — no shared DB) ─────
     %% CollectionPendingPatches lives on Probe DB. Listed here because
     %% PatchStoreLocation (SS) STATUS=AVAILABLE is the direct trigger that
     %% resolves rows in this table on the Probe side.
