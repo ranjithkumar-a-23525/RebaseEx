@@ -20,7 +20,7 @@ flowchart TD
     J -->|Yes| K["🖥️ PROBE: Mark DOWNLOAD_FAILED<br/>Reason: SS timed out"]
     H --> L{"🖥️ PROBE: All patches ready?"}
     L -->|No| G
-    L -->|Yes| M["🖥️ PROBE: Generate patch-products.zip<br/>Deploy to DS/Agents]
+    L -->|Yes| M["🖥️ PROBE: Generate patch-products.zip<br/>Deploy to DS/Agents"]
     M --> N(["🖥️ PROBE: Cancel Polling ✓"])
     I --> N
     K --> N
