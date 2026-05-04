@@ -92,35 +92,30 @@ erDiagram
         INTEGER RETRY_COUNT
     }
 
-    %% ── NEW TABLES ─────────────────────────────────────────
-    SSRedhatCertDetails {
+    %% ── REUSED TABLES (from Probe, no schema changes) ──────
+    RedhatCertDetails_SS {
         BIGINT ID PK
         NCHAR50 EDITION UK
         CHAR255 CERT_ALIAS
         BIGINT CERT_EXPIRY
-        BIGINT SOURCE_PROBE_ID FK
-        BIGINT LAST_SYNCED
         BOOLEAN IS_VALID
     }
 
-    SSSuseProductKeys {
-        BIGINT ID PK
-        VARCHAR100 EDITION
-        VARCHAR50 PRODUCT_VERSION
-        VARCHAR512 TOKEN
-        BIGINT SOURCE_PROBE_ID FK
-        BIGINT LAST_SYNCED
-        BOOLEAN IS_VALID
+    SuseProductKeys_SS {
+        BIGINT KEY_ID PK
+        BIGINT CUSTOMER_ID FK
+        NCHAR100 OS_EDITION
+        SCHAR500 PRODUCT_KEY
+        INTEGER IS_VALID
     }
 
     %% ── EXISTING TABLES (FK reference only) ────────────────
-    ProbeDetails {
-        BIGINT PROBE_ID PK
+    CustomerInfo {
+        BIGINT CUSTOMER_ID PK
     }
 
     %% ── RELATIONSHIPS ──────────────────────────────────────
-    ProbeDetails ||--o{ SSRedhatCertDetails : "forwards certs"
-    ProbeDetails ||--o{ SSSuseProductKeys : "forwards tokens"
+    CustomerInfo ||--o{ SuseProductKeys_SS : "owns keys"
 ```
 
 ### 2.2 ER Diagram — Probe Tables
@@ -238,9 +233,15 @@ long cutoff = System.currentTimeMillis() - (CLEANUP_GRACE_PERIOD_MINUTES * 60_00
 
 ---
 
-#### 2.3.3 SSRedhatCertDetails (SS — New)
+#### 2.3.3 RedhatCertDetails (SS — Reused from Probe, No Schema Changes)
 
-> One row per RedHat edition. Stores certs forwarded from Probes for mTLS against `cdn.redhat.com`.
+> **Reused table** — same structure as the existing Probe-side `RedhatCertDetails`. Added to `data-dictionary-ss.xml` with zero modifications. One row per RedHat edition — stores certs forwarded from Probes for mTLS against `cdn.redhat.com`.
+>
+> **Why no `SOURCE_PROBE_ID` column:**
+> - Download logic doesn't need it — SS uses the cert regardless of which Probe sent it
+> - Dedup is keyed on `EDITION` (unique constraint) — source is irrelevant
+> - Audit trail is maintained via log line at receive time: `"Received cert for edition={} from probeId={}"`
+> - Adding a FK to `ProbeDetails` creates unnecessary coupling for pure audit data
 
 | Column | Type | Default | Nullable | Description |
 |--------|------|---------|----------|-------------|
@@ -248,35 +249,31 @@ long cutoff = System.currentTimeMillis() - (CLEANUP_GRACE_PERIOD_MINUTES * 60_00
 | `EDITION` | VARCHAR(50) (UNIQUE) | — | NO | `Server` / `Workstation` / `Desktop` |
 | `CERT_ALIAS` | VARCHAR(255) | `""` | NO | Keystore alias |
 | `CERT_EXPIRY` | BIGINT | `-1` | YES | Expiry timestamp (`-1` = not set) |
-| `SOURCE_PROBE_ID` | BIGINT (FK) | `-1` | NO | Audit: which Probe forwarded (`-1` = unknown) |
-| `LAST_SYNCED` | BIGINT | `-1` | NO | Last sync time (`-1` = never) |
 | `IS_VALID` | BOOLEAN | `true` | NO | Whether cert is currently valid |
 
-**FK:** `SOURCE_PROBE_ID` → `ProbeDetails.PROBE_ID`
 **Unique constraint:** `EDITION`
-
-**DDL file:** `data-dictionary-ss.xml`
+**DDL file:** `data-dictionary-ss.xml` (copy from existing Probe `data-dictionary.xml`)
 
 ---
 
-#### 2.3.4 SSSuseProductKeys (SS — New)
+#### 2.3.4 SuseProductKeys (SS — Reused from Probe, No Schema Changes)
 
-> Stores SUSE registration tokens forwarded from Probes. One row per (edition, product version).
+> **Reused table** — same structure as the existing Probe-side `SuseProductKeys`. Added to `data-dictionary-ss.xml` with zero modifications. Stores SUSE registration tokens forwarded from Probes. `SuseAuthtokenTask` (also reused from Probe) fetches auth tokens from `scc.suse.com` and stores them in `SuseAuthTokens`.
+>
+> **Why no `SOURCE_PROBE_ID` column:**
+> - Same reasoning as RedHat — token works regardless of source
+> - Dedup is keyed on `(PRODUCT_KEY, CUSTOMER_ID)` — source is irrelevant
+> - Audit via logging at receive time
 
 | Column | Type | Default | Nullable | Description |
 |--------|------|---------|----------|-------------|
-| **`ID`** | BIGINT (PK, auto) | — | NO | Auto-generated |
-| `EDITION` | VARCHAR(100) | — | NO | SUSE product edition |
-| `PRODUCT_VERSION` | VARCHAR(50) | — | NO | SUSE product version |
-| `TOKEN` | VARCHAR(512) | `""` | NO | SCC registration token |
-| `SOURCE_PROBE_ID` | BIGINT (FK) | `-1` | NO | Audit: which Probe forwarded |
-| `LAST_SYNCED` | BIGINT | `-1` | NO | Last sync timestamp |
-| `IS_VALID` | BOOLEAN | `true` | NO | Whether token is valid |
+| **`KEY_ID`** | BIGINT (PK, auto) | — | NO | Auto-generated |
+| `CUSTOMER_ID` | BIGINT (FK) | — | NO | → `CustomerInfo.CUSTOMER_ID` |
+| `OS_EDITION` | NCHAR(100) | — | NO | SUSE product edition |
+| `PRODUCT_KEY` | SCHAR(500) | — | NO | SCC registration token |
+| `IS_VALID` | INTEGER | `0` | NO | Whether token is valid |
 
-**FK:** `SOURCE_PROBE_ID` → `ProbeDetails.PROBE_ID`
-**Unique constraint:** `(EDITION, PRODUCT_VERSION)`
-
-**DDL file:** `data-dictionary-ss.xml`
+**DDL file:** `data-dictionary-ss.xml` (copy from existing Probe `data-dictionary.xml`)
 
 ---
 
@@ -360,17 +357,18 @@ long cutoff = System.currentTimeMillis() - (CLEANUP_GRACE_PERIOD_MINUTES * 60_00
 |-------|----------|------|----------|
 | `PatchStoreCleanupSettings` | SS + Probe | **Modified** (add `DOWNLOAD_MODE`) | `data-dictionary.xml` |
 | `PatchStoreLocation` | SS | **Reused from Probe (no schema changes)** — `DOWNLOAD_TIME` repurposed for soft-delete grace period | `data-dictionary-ss.xml` |
-| `SSRedhatCertDetails` | SS | **New** | `data-dictionary-ss.xml` |
-| `SSSuseProductKeys` | SS | **New** | `data-dictionary-ss.xml` |
-| `PATCHSTORELOCATION` | Probe | **Existing (no changes)** | — |
-| `SuseProductKeys` | SS | **Reused from Probe** (for `SuseAuthtokenTask`) | `data-dictionary-ss.xml` |
+| `RedhatCertDetails` | SS | **Reused from Probe (no schema changes)** — no `SOURCE_PROBE_ID` needed | `data-dictionary-ss.xml` |
+| `SuseProductKeys` | SS | **Reused from Probe (no schema changes)** — no `SOURCE_PROBE_ID` needed | `data-dictionary-ss.xml` |
 | `SuseAuthTokens` | SS | **Reused from Probe** (populated by `SuseAuthtokenTask`) | `data-dictionary-ss.xml` |
 | `PatchKeystoreDetails` | SS | **Reused from Probe** (PKCS12 keystore) | `data-dictionary-ss.xml` |
+| `PATCHSTORELOCATION` | Probe | **Existing (no changes)** | — |
 
 **Tables explicitly NOT created:**
 
 | Table | Why Not |
 |-------|---------|
+| `SSRedhatCertDetails` | Reuse Probe's `RedhatCertDetails` — same schema. `SOURCE_PROBE_ID` is pure audit; use logging instead. |
+| `SSSuseProductKeys` | Reuse Probe's `SuseProductKeys` — same schema. `SOURCE_PROBE_ID` and `LAST_SYNCED` are audit; use logging. |
 | `PatchStoreLocation (SS)` | Reuse existing `PatchStoreLocation` — same schema, same DAO, same `ConfigStatusDefn` pattern. Checksum in `BINARYCHECKSUMVALUES`. Soft-delete grace via repurposed `DOWNLOAD_TIME`. |
 | `CentralizedDownloadSettings` | `DOWNLOAD_MODE` on existing `PatchStoreCleanupSettings` + SyMParameter keys |
 | `OnDemandDownloadRequest` | SS dedup via `PatchStoreLocation.STATUS_ID` check (§10.2). No tracking rows. |
@@ -773,7 +771,7 @@ Probe forwards a RedHat mTLS certificate for SS-side CDN authentication.
 **SS processing:**
 1. Check existing cert for this edition: if current cert has later expiry → skip
 2. Extract ZIP → import PEMs into PKCS12 keystore via `PatchKeystoreService`
-3. UPSERT `SSRedhatCertDetails` by `EDITION`
+3. UPSERT `RedhatCertDetails` by `EDITION`
 4. Store keystore password in `PatchKeystoreDetails`
 
 ---
@@ -811,7 +809,7 @@ Probe forwards SUSE registration codes to SS.
 ```
 
 **SS processing:**
-1. UPSERT `SSSuseProductKeys` on `(EDITION, PRODUCT_VERSION)`
+1. UPSERT `SuseProductKeys` on `(PRODUCT_KEY, CUSTOMER_ID)`
 2. Run `SuseAuthtokenTask` to fetch auth tokens from `scc.suse.com`
 3. Tokens stored in `SuseAuthTokens`, consumed by `SuseSettingsUtil.appendSUSEToken()` at download time
 
