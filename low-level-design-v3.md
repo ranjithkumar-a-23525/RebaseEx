@@ -55,7 +55,7 @@ These principles are non-negotiable constraints from `system-design.md` that dri
 | 2 | **No vendor fallback** — SS download failure = deployment failure (§13.3, §14) | No `FALLBACK_TO_VENDOR` column. No fallback API. |
 | 3 | **No new collection statuses** — collection stays in "Draft - Download in progress" (§7.3) | No `502` / `503` status codes. |
 | 4 | **Pending-patch state is in-memory** in `PatchDownloadListener` maps (§7.1 note) | No `CollectionPendingPatches` table. Startup recovery from collection definition (§9.5). |
-| 5 | **No `OnDemandDownloadRequest`/`OnDemandPatchRequest` tables** — SS dedup via `SSPATCHSTORELOCATION.STATUS` (§10.2) | Two tables eliminated. |
+| 5 | **No `OnDemandDownloadRequest`/`OnDemandPatchRequest` tables** — SS dedup via `PatchStoreLocation.STATUS_ID` on SS (§10.2) | Two tables eliminated. |
 | 6 | **3-way download mode** (1=Probe, 2=SS+caching, 3=SS+routing) — not a boolean toggle (§7.1) | `DOWNLOAD_MODE` INTEGER column on existing `PatchStoreCleanupSettings`. |
 | 7 | **Settings via existing cleanup settings API** — no dedicated settings table (§7.1, §8.1) | No `CentralizedDownloadSettings` table. Extend `PatchCleanupSettingsController`. |
 | 8 | **Settings propagation via customer metadata XML** — not event push (§15.1) | `centralized-download-settings.xml` via `PatchMetaUtil`. |
@@ -78,17 +78,21 @@ erDiagram
         INTEGER DOWNLOAD_MODE "NEW: 1=Probe 2=SS+Cache 3=SS+Route"
     }
 
-    %% ── NEW TABLES ─────────────────────────────────────────
-    SSPATCHSTORELOCATION {
-        BIGINT PATCH_ID PK
-        INTEGER LANGUAGE_ID PK
-        INTEGER STATUS
-        BIGINT DOWNLOAD_TIME
-        BIGINT FILE_SIZE
-        VARCHAR128 CHECKSUM_VAL
-        BIGINT PENDING_DELETE_AT
+    %% ── REUSED TABLE (from Probe, no schema changes) ───────
+    PatchStoreLocation_SS {
+        BIGINT PATCHID PK
+        INTEGER LANGUAGEID PK
+        CHAR255 WEBPATH
+        CHAR255 STOREPATH
+        BIGINT PATCH_SIZE
+        CHAR100 STATUS
+        INTEGER STATUS_ID FK
+        BIGINT DOWNLOAD_TIME "Repurposed as deletion-mark time for PENDING_DELETE"
+        NCHAR2000 REMARKS
+        INTEGER RETRY_COUNT
     }
 
+    %% ── NEW TABLES ─────────────────────────────────────────
     SSRedhatCertDetails {
         BIGINT ID PK
         NCHAR50 EDITION UK
@@ -182,29 +186,55 @@ erDiagram
 
 ---
 
-#### 2.3.2 SSPATCHSTORELOCATION (SS — New)
+#### 2.3.2 PatchStoreLocation (SS — Reused from Probe, No Schema Changes)
 
-> Tracks per-patch download lifecycle on SS. One row per (patch, language).
+> **Reused table** — same structure as the existing Probe-side `PatchStoreLocation` (defined in `data-dictionary.xml`, `BinaryRepository` schema). Added to `data-dictionary-ss.xml` with zero modifications. Tracks per-patch download lifecycle on SS. Both SS and Probe use the same table name in their respective databases — they are never joined.
+>
+> **Why reuse (not a new table):**
+> - Same conceptual role: "which patches do I have, what's their status, where are they on disk?"
+> - Same PK: composite `(PATCHID, LANGUAGEID)`
+> - Same DAO/Util reuse: `PatchStoreLocationUtil`, `PatchStoreLocationHandler`, and all existing query patterns work directly
+> - The download pipeline (`PatchDownloadManager`) that SS reuses (system-design.md §2.2) writes to `PatchStoreLocation` natively — no adapter needed
+> - Checksum is already stored separately in `BINARYCHECKSUMVALUES` table via `BinaryChecksumUtil.addOrUpdateBinaryCheckSumValues()` — no inline `CHECKSUM_VAL` needed
+> - `PENDING_DELETE_AT` column is unnecessary — when status flips to `PENDING_DELETE`, `DOWNLOAD_TIME` is overwritten with the current timestamp (original download time is irrelevant for a patch being deleted). `DeferredCleanupTask` queries: `WHERE STATUS_ID = PENDING_DELETE AND DOWNLOAD_TIME < (now - grace_period)`
 
 | Column | Type | Default | Nullable | Description |
 |--------|------|---------|----------|-------------|
-| **`PATCH_ID`** | BIGINT (PK) | — | NO | Patch identifier |
-| **`LANGUAGE_ID`** | INTEGER (PK) | — | NO | Language variant (`0`=all languages, `1`=English, etc.) |
-| `STATUS` | INTEGER | `0` | NO | `0`=QUEUED, `1`=DOWNLOADING, `2`=AVAILABLE, `3`=FAILED, `4`=PENDING_DELETE, `5`=DELETED |
-| `DOWNLOAD_TIME` | BIGINT | `-1` | NO | Epoch ms when downloaded (`-1` = not yet) |
-| `FILE_SIZE` | BIGINT | `0` | NO | Size in bytes |
-| `CHECKSUM_VAL` | VARCHAR(128) | `""` | NO | SHA256 hash (empty = not yet computed) |
-| `PENDING_DELETE_AT` | BIGINT | `-1` | NO | Epoch ms when PENDING_DELETE was set (`-1` = not pending) |
+| **`PATCHID`** | BIGINT (PK) | — | NO | Patch identifier |
+| **`LANGUAGEID`** | INTEGER (PK) | `1` | NO | Language variant (`0`=all languages, `1`=English, etc.) |
+| `WEBPATH` | CHAR(255) | — | NO | SS-internal relative URL (e.g., `/common-store/{fileName}`) |
+| `STOREPATH` | CHAR(255) | — | NO | Physical file path on SS disk |
+| `PATCH_SIZE` | BIGINT | `0` | NO | Size in bytes |
+| `STATUS` | CHAR(100) | — | NO | String status (`AVAILABLE`, `DLOAD_FAILED`, etc.) |
+| `STATUS_ID` | INTEGER (FK) | `99` | NO | FK → `ConfigStatusDefn.STATUS_ID` |
+| `DOWNLOAD_TIME` | BIGINT | `-1` | NO | Epoch ms when downloaded. **Repurposed** as deletion-mark time when `STATUS_ID = PENDING_DELETE`. |
+| `REMARKS` | NCHAR(2000) | — | YES | Failure reason (e.g., "Checksum mismatch after 3 retries") |
+| `REMARKS_ARGS` | NCHAR(250) | — | YES | Format arguments for REMARKS |
+| `RETRY_COUNT` | INTEGER | `0` | NO | Download retry attempts |
 
 **Indexes:**
 
 | Index | Columns | Purpose |
 |-------|---------|---------|
-| PK | `(PATCH_ID, LANGUAGE_ID)` | Composite primary key |
-| `IDX_SSPSL_STATUS` | `(STATUS)` | Bulk queries: all QUEUED patches, all FAILED patches, etc. |
-| `IDX_SSPSL_PENDING_DELETE` | `(STATUS, PENDING_DELETE_AT)` | `DeferredCleanupTask`: find PENDING_DELETE past grace period |
+| PK | `(PATCHID, LANGUAGEID)` | Composite primary key |
+| `IDX_PSL_STATUS` | `(STATUS_ID)` | Bulk queries: all QUEUED, all FAILED, etc. |
+| `IDX_PSL_PENDING_DELETE` | `(STATUS_ID, DOWNLOAD_TIME)` | `DeferredCleanupTask`: `WHERE STATUS_ID = PENDING_DELETE AND DOWNLOAD_TIME < (now - grace)` |
 
-**DDL file:** `data-dictionary-ss.xml`
+**Soft-delete grace period — no extra column needed:**
+
+```java
+// DeferredCleanupTask (SS, runs every 15 min):
+// When marking PENDING_DELETE:
+psl.setStatusId(PENDING_DELETE);
+psl.setDownloadTime(System.currentTimeMillis());  // repurpose as deletion-mark time
+PatchStoreLocationUtil.update(psl);
+
+// When checking grace period:
+long cutoff = System.currentTimeMillis() - (CLEANUP_GRACE_PERIOD_MINUTES * 60_000L);
+// SELECT * FROM PatchStoreLocation WHERE STATUS_ID = PENDING_DELETE AND DOWNLOAD_TIME < cutoff
+```
+
+**DDL file:** `data-dictionary-ss.xml` (copy from existing `data-dictionary.xml` — no modifications)
 
 ---
 
@@ -269,16 +299,18 @@ erDiagram
 
 ### 2.4 Status Enumerations
 
-#### SSPATCHSTORELOCATION.STATUS (SS)
+#### PatchStoreLocation STATUS/STATUS_ID (SS — same pattern as Probe)
 
-| Value | Name | Description |
-|-------|------|-------------|
-| `0` | `QUEUED` | Queued for download from vendor |
-| `1` | `DOWNLOADING` | Download in progress |
-| `2` | `AVAILABLE` | Downloaded, checksum validated, ready for serving |
-| `3` | `FAILED` | Download failed after retries. `.failed` marker written. |
-| `4` | `PENDING_DELETE` | Soft-deleted. Physical removal after grace period. |
-| `5` | `DELETED` | Physically deleted from common store. |
+> Uses the existing `STATUS`/`STATUS_ID` pattern from `ConfigStatusDefn`. String values match existing Probe constants. Two new statuses added to `ConfigStatusDefn` for soft-delete lifecycle.
+
+| STATUS (string) | STATUS_ID | Existing? | Description |
+|-----------------|-----------|-----------|-------------|
+| `DLOAD_REQUESTED` | (existing) | ✅ | Queued for download from vendor |
+| `DLOAD_RUNNING` | (existing) | ✅ | Download in progress |
+| `AVAILABLE` | (existing) | ✅ | Downloaded, checksum validated, ready for serving |
+| `DLOAD_FAILED` | (existing) | ✅ | Download failed after retries. `.failed` marker written. |
+| `PENDING_DELETE` | (new) | ❌ | Soft-deleted. `DOWNLOAD_TIME` overwritten with deletion-mark time. Physical removal after grace period. |
+| `DELETED` | (new) | ❌ | Physically deleted from common store. |
 
 #### Collection Status — No New Values
 
@@ -327,7 +359,7 @@ erDiagram
 | Table | Location | Type | DDL File |
 |-------|----------|------|----------|
 | `PatchStoreCleanupSettings` | SS + Probe | **Modified** (add `DOWNLOAD_MODE`) | `data-dictionary.xml` |
-| `SSPATCHSTORELOCATION` | SS | **New** | `data-dictionary-ss.xml` |
+| `PatchStoreLocation` | SS | **Reused from Probe (no schema changes)** — `DOWNLOAD_TIME` repurposed for soft-delete grace period | `data-dictionary-ss.xml` |
 | `SSRedhatCertDetails` | SS | **New** | `data-dictionary-ss.xml` |
 | `SSSuseProductKeys` | SS | **New** | `data-dictionary-ss.xml` |
 | `PATCHSTORELOCATION` | Probe | **Existing (no changes)** | — |
@@ -339,8 +371,9 @@ erDiagram
 
 | Table | Why Not |
 |-------|---------|
+| `PatchStoreLocation (SS)` | Reuse existing `PatchStoreLocation` — same schema, same DAO, same `ConfigStatusDefn` pattern. Checksum in `BINARYCHECKSUMVALUES`. Soft-delete grace via repurposed `DOWNLOAD_TIME`. |
 | `CentralizedDownloadSettings` | `DOWNLOAD_MODE` on existing `PatchStoreCleanupSettings` + SyMParameter keys |
-| `OnDemandDownloadRequest` | SS dedup via `SSPATCHSTORELOCATION.STATUS` check (§10.2). No tracking rows. |
+| `OnDemandDownloadRequest` | SS dedup via `PatchStoreLocation.STATUS_ID` check (§10.2). No tracking rows. |
 | `OnDemandPatchRequest` | Same — eliminated. |
 | `CollectionPendingPatches` (Probe) | Pending state in-memory in `PatchDownloadListener` maps. Rebuilt on restart from collection definition (§9.5). |
 
@@ -619,15 +652,15 @@ Probe requests priority download of missing patches for a deployment.
 | Field | Description |
 |-------|-------------|
 | `accepted` | Patches queued for priority download (not yet in common store) |
-| `alreadyAvailable` | Patches already `STATUS=AVAILABLE` in `SSPATCHSTORELOCATION` |
+| `alreadyAvailable` | Patches already `STATUS=AVAILABLE` in `PatchStoreLocation (SS)` |
 | `estimatedTimeMinutes` | Rough ETA based on queue depth |
 
 **SS processing:**
-1. Check `SSPATCHSTORELOCATION` → split `accepted` vs `alreadyAvailable`
+1. Check `PatchStoreLocation (SS)` → split `accepted` vs `alreadyAvailable`
 2. For accepted where `STATUS = FAILED`: clear `.failed` marker, reset to `QUEUED`
 3. Skip if `STATUS IN (QUEUED, DOWNLOADING)` — already being handled
 4. Queue accepted patches with **highest priority** (front of download queue)
-5. **No tracking rows** — dedup via `SSPATCHSTORELOCATION.STATUS`
+5. **No tracking rows** — dedup via SS `PatchStoreLocation.STATUS_ID`
 6. **No push event** — Probe discovers result via 5-min polling scheduler
 
 ---
@@ -662,7 +695,7 @@ Probe reports that a patch file in the common store has an invalid checksum.
 **SS processing:**
 1. Delete corrupted file(s) from common store
 2. Delete any `.failed` markers for the affected language IDs
-3. Reset `SSPATCHSTORELOCATION.STATUS = QUEUED`
+3. Reset SS `PatchStoreLocation.STATUS_ID` to `DLOAD_REQUESTED`
 4. Re-queue download from vendor with highest priority
 5. Probe's polling scheduler continues monitoring
 
@@ -798,764 +831,4 @@ Accepts multipart upload; stores binary in common store. Used by both SS admin d
 | `file` | Binary | Patch binary file |
 | `patchId` | Text | Patch identifier |
 | `languageId` | Text | Language variant (`1`=English, `0`=all) |
-| `fileName` | Text | Target file name in common store |
-| `checksum` | Text | Expected SHA256 checksum |
-| `probeId` | Text | Source Probe ID (or `"SS"` for direct upload) |
-
-**Response `200 OK`:**
-
-```json
-{
-    "status": "success",
-    "patchId": 400010,
-    "storedAs": "400010-custom-patch.exe",
-    "checksumValid": true
-}
-```
-
-**Response `400 Bad Request`:**
-
-```json
-{
-    "status": "error",
-    "errorCode": "CHECKSUM_MISMATCH",
-    "message": "Uploaded file checksum does not match expected value"
-}
-```
-
-**SS processing:**
-1. Store binary in `{commonStore}/{fileName}`
-2. Validate checksum (SHA256)
-3. Update `SSPATCHSTORELOCATION` with `STATUS=AVAILABLE`
-4. **No push event** — other Probes discover via 30-min missing-patch scheduler (§17.2)
-5. Uploading Probe gets result synchronously via REST response
-
----
-
-### 3.5 Patch Store Management APIs (SS Admin)
-
-#### POST `/dcapi/centralizedDownload/patches/redownload`
-
-Re-triggers download for selected patches.
-
-**Auth:** SS Admin session
-
-**Request:**
-
-```json
-{
-    "patchIds": [101, 205, 310]
-}
-```
-
-**Response `200 OK`:**
-
-```json
-{
-    "status": "success",
-    "requeued": 3,
-    "message": "3 patches queued for re-download"
-}
-```
-
-**Side effects:**
-1. Reset `SSPATCHSTORELOCATION.STATUS = QUEUED` for each patch
-2. Delete any `.failed` markers: `{commonStore}/.patch-status/{patchId}_{langId}.failed`
-3. Queue patches in `ss-patch-download-data`
-
----
-
-#### DELETE `/dcapi/centralizedDownload/patches`
-
-Soft-delete patches. Physical removal after grace period by `DeferredCleanupTask`.
-
-**Auth:** SS Admin session
-
-**Request:**
-
-```json
-{
-    "patchIds": [101, 205]
-}
-```
-
-**Response `200 OK`:**
-
-```json
-{
-    "status": "success",
-    "markedForDeletion": 2,
-    "gracePeriodMinutes": 30,
-    "message": "2 patches marked for deletion. Physical removal after 30 minutes."
-}
-```
-
-**Side effects:**
-1. Set `SSPATCHSTORELOCATION.STATUS = PENDING_DELETE` (4)
-2. Set `PENDING_DELETE_AT = System.currentTimeMillis()`
-3. `DeferredCleanupTask` physically deletes after `cleanup_grace_period_minutes`
-4. After physical deletion: regenerate `deleted-patches.xml` in common store (§5.3)
-
----
-
-### 3.6 Dependency Package APIs (SS Admin)
-
-#### POST `/dcapi/centralizedDownload/dependency/redownload`
-
-Re-triggers download for selected dependency packages.
-
-**Auth:** SS Admin session
-
-**Request:**
-
-```json
-{
-    "packageIds": [1, 2, 3]
-}
-```
-
-**Response `200 OK`:**
-
-```json
-{
-    "status": "success",
-    "requeued": 3
-}
-```
-
----
-
-#### DELETE `/dcapi/centralizedDownload/dependency`
-
-Delete dependency packages from common store.
-
-**Auth:** SS Admin session
-
-**Request:**
-
-```json
-{
-    "packageIds": [1, 2]
-}
-```
-
-**Response `200 OK`:**
-
-```json
-{
-    "status": "success",
-    "deleted": 2
-}
-```
-
----
-
-### 3.7 Monitoring & Admin APIs
-
-#### GET `/dcapi/centralizedDownload/stats`
-
-Returns common store statistics.
-
-**Auth:** SS Admin session
-
-**Response `200 OK`:**
-
-```json
-{
-    "totalPatches": 1250,
-    "byStatus": {
-        "QUEUED": 15,
-        "DOWNLOADING": 3,
-        "AVAILABLE": 1200,
-        "FAILED": 12,
-        "PENDING_DELETE": 8,
-        "DELETED": 12
-    },
-    "totalFileSizeBytes": 53687091200,
-    "totalFileSizeFormatted": "50.0 GB",
-    "diskUsage": {
-        "totalSpaceGB": 500,
-        "freeSpaceGB": 320,
-        "usedByStoreGB": 50
-    }
-}
-```
-
----
-
-#### GET `/dcapi/centralizedDownload/probeStatus`
-
-Returns per-Probe connectivity and common store access status.
-
-**Auth:** SS Admin session
-
-**Response `200 OK`:**
-
-```json
-{
-    "probes": [
-        {
-            "probeId": 1001,
-            "probeName": "Probe-US-East",
-            "online": true,
-            "commonStoreAccessible": true,
-            "lastSettingsSyncTime": 1713168000000
-        },
-        {
-            "probeId": 1002,
-            "probeName": "Probe-EU-West",
-            "online": true,
-            "commonStoreAccessible": false,
-            "lastSettingsSyncTime": 1713167000000
-        }
-    ]
-}
-```
-
----
-
-#### POST `/dcapi/centralizedDownload/retryOnDemand/{collectionId}`
-
-Re-sends an on-demand request for a stuck collection. Useful when all patches timed out.
-
-**Auth:** SS Admin session
-
-**Response `200 OK`:**
-
-```json
-{
-    "status": "success",
-    "collectionId": 12345,
-    "message": "On-demand request re-sent for collection 12345"
-}
-```
-
----
-
-#### POST `/dcapi/centralizedDownload/cancelDeployment/{collectionId}`
-
-Cancels a stuck collection.
-
-**Auth:** SS Admin session
-
-**Response `200 OK`:**
-
-```json
-{
-    "status": "success",
-    "collectionId": 12345,
-    "message": "Deployment cancelled for collection 12345"
-}
-```
-
----
-
-### 3.8 Store Path Change API
-
-#### PUT `/dcapi/centralizedDownload/changePath`
-
-Changes the common store path while centralized download remains enabled.
-
-**Auth:** SS Admin session
-
-**Request:**
-
-```json
-{
-    "newCommonStorePath": "\\\\NAS2\\PatchStore",
-    "migrateFiles": true
-}
-```
-
-**Response `200 OK` (validation passed, migration started):**
-
-```json
-{
-    "status": "success",
-    "phase": "MIGRATION_STARTED",
-    "message": "Validation passed. File migration in progress. SS restart required after completion.",
-    "filesToMigrate": 1200,
-    "estimatedSizeGB": 50
-}
-```
-
-**Response `200 OK` (validation failed):**
-
-```json
-{
-    "status": "error",
-    "phase": "VALIDATION_FAILED",
-    "probeResults": [
-        { "probeId": 1003, "status": "FAILED", "error": "Directory not found" }
-    ],
-    "message": "Probe access validation failed. Fix network shares before retrying."
-}
-```
-
-**Response `200 OK` (migrateFiles=false):**
-
-```json
-{
-    "status": "success",
-    "phase": "SWITCH_COMPLETE",
-    "message": "Path changed. All SSPATCHSTORELOCATION entries reset to QUEUED. SS restart required. Full re-download will begin after restart.",
-    "patchesReset": 1200
-}
-```
-
-**Processing phases:** See system-design.md §16.4.2 for Phase A (Validate) → Phase B (Migrate) → Phase C (Atomic Switch).
-
----
-
-### 3.9 Probe-Side APIs (Called by SS)
-
-#### GET `/dcapi/centralizedDownload/settings`
-
-Probe pulls centralized download settings from SS at startup and after DB sync.
-
-**Auth:** Probe API key headers
-
-**Response `200 OK`:**
-
-```json
-{
-    "downloadMode": 2,
-    "commonStoreDir": "\\\\NAS\\PatchStore",
-    "probeCacheMaxSize": "50g"
-}
-```
-
-**Probe-side processing:**
-1. Write `DOWNLOAD_MODE` to local `PatchStoreCleanupSettings`
-2. Write `common_store_dir` and `probe_cache_max_size` to local SyMParameter
-3. If `DOWNLOAD_MODE` changed: trigger Nginx config regeneration + reload
-
----
-
-#### GET `/api/v1/probe/centralizedDownload/validateStoreAccess`
-
-SS calls this endpoint on each Probe to verify common store accessibility during enable-time validation.
-
-**Auth:** SS auth headers
-
-**Query params:**
-
-| Param | Description |
-|-------|-------------|
-| `commonStorePath` | Path to validate |
-| `sentinelNonce` | Nonce from sentinel file to verify correct store |
-
-**Response `200 OK`:**
-
-```json
-{
-    "probeId": 1001,
-    "status": "SUCCESS",
-    "pathResolved": "\\\\NAS\\PatchStore",
-    "freeSpaceGB": 150
-}
-```
-
-**Response `200 OK` (failed):**
-
-```json
-{
-    "probeId": 1001,
-    "status": "FAILED",
-    "error": "Sentinel file not found — path may not point to SS store"
-}
-```
-
-**Probe-side processing:**
-1. Check: directory exists?
-2. Check: can list files? (read permission)
-3. Read `.ss-store-sentinel` → parse JSON → verify nonce matches
-4. Return result with free space info
-
----
-
-### 3.10 Nginx Auth Servlets
-
-> **Not REST APIs** — mapped as servlets for Nginx `auth_request` subrequests. Return HTTP status codes only (no body).
-
-#### Probe-side: `GET /common-store-auth`
-
-| Aspect | Detail |
-|--------|--------|
-| **Location** | Probe Nginx → `auth_request` subrequest for `/store/` |
-| **Validates** | DS/Agent credentials (Agent.key / basic auth) |
-| **Returns** | `200` (allow) or `401` (deny) |
-| **Implementation** | Servlet in Probe's `web.xml` |
-
-#### SS-side: `GET /common-store-auth`
-
-| Aspect | Detail |
-|--------|--------|
-| **Location** | SS Nginx → `auth_request` subrequest for `/common-store/` |
-| **Validates** | `SUMMARY_API_KEY`, `PROBE_ID`, `HS_KEY` against `SUMMARYSERVERAPIKEYDETAILS` |
-| **Returns** | `200` (allow) or `401` (deny) |
-| **Implementation** | `SSStoreAuthValidator` servlet |
-
----
-
-## 4. Nginx Configuration
-
-### 4.1 SS-Side Nginx
-
-SS Nginx serves the common store as static files with `open_file_cache` (not `proxy_cache`). DS/Agents do **not** download from SS directly — they use Probe `/store/`. SS `/common-store/` is for Probe→SS fallback only.
-
-```nginx
-# ── File descriptor cache ──
-open_file_cache          max=2000 inactive=24h;
-open_file_cache_valid    1h;
-open_file_cache_min_uses 1;
-open_file_cache_errors   on;
-
-location /common-store/ {
-    alias %ss.common.store.loc%/;
-
-    sendfile           on;
-    tcp_nopush         on;
-    tcp_nodelay        on;
-    output_buffers     4 256k;
-
-    add_header Cache-Control "public, max-age=2592000, immutable" always;
-    etag on;
-
-    limit_rate_after   50m;
-    limit_rate         100m;
-    gzip off;
-
-    auth_request /common-store-auth;
-    add_header Content-Disposition "attachment" always;
-
-    limit_conn common_store_conn 10;
-    limit_conn common_store_total 200;
-    limit_conn_status 503;
-}
-```
-
-### 4.2 Probe-Side Nginx (Self-Proxy Pattern)
-
-The Probe uses a self-proxy pattern: an internal server (127.0.0.1:9090) reads from the common store (network share) via `alias`, and the external `/store/` location `proxy_pass`es to it with optional `proxy_cache`.
-
-#### Block 1: `http {}` context — `nginx-pre-product.conf.template`
-
-```nginx
-# ── Cache zone (always defined when centralized enabled, harmless when unused) ──
-%centralized.download.enabled%proxy_cache_path "%centralized.patch.repo.path%/../../NginxCache/patch-store-cache"
-%centralized.download.enabled%    levels=1:2
-%centralized.download.enabled%    keys_zone=patch_cache:10m
-%centralized.download.enabled%    max_size=%centralized.cache.max.size%g
-%centralized.download.enabled%    inactive=30d
-%centralized.download.enabled%    use_temp_path=off;
-
-# ── Internal server: reads from common store (network share) ──
-%centralized.download.enabled%server {
-%centralized.download.enabled%    listen       127.0.0.1:9090;
-%centralized.download.enabled%    server_name  localhost;
-%centralized.download.enabled%
-%centralized.download.enabled%    location /internal-patch-store/ {
-%centralized.download.enabled%        alias "%centralized.patch.repo.path%/";
-%centralized.download.enabled%        sendfile           on;
-%centralized.download.enabled%        tcp_nopush         on;
-%centralized.download.enabled%        tcp_nodelay        on;
-%centralized.download.enabled%        open_file_cache          max=2000 inactive=24h;
-%centralized.download.enabled%        open_file_cache_valid    1h;
-%centralized.download.enabled%        open_file_cache_min_uses 1;
-%centralized.download.enabled%        open_file_cache_errors   on;
-%centralized.download.enabled%        allow 127.0.0.1;
-%centralized.download.enabled%        deny  all;
-%centralized.download.enabled%    }
-%centralized.download.enabled%}
-
-# ── Map: human-readable X-Cache-Status header ──
-%centralized.download.enabled%map $upstream_cache_status $cache_status_display {
-%centralized.download.enabled%    ""       "DISABLED";
-%centralized.download.enabled%    default  $upstream_cache_status;
-%centralized.download.enabled%}
-```
-
-#### Block 2: Modified `/store/` location — `nginx-static-agent.conf.template`
-
-```nginx
-location /store/{
-    %nginx.dev.mode%set $loc_match "/store/";
-    #location_start_PatchStore
-    #location_end_PatchStore
-
-    %disable.http.basic.auth%auth_basic "Private Property";
-    auth_basic_user_file ../../conf/Tomcat/Agent.key;
-    if ( $ssl_client_verify ~ ^(?!(%client.cert.auth.level%)) ){return 403 "CLIENT CERT AUTH ERROR";}
-
-    # ── Standard mode (mode=1): serve from local store ──
-    %centralized.download.disabled%gzip off;
-    %centralized.download.disabled%alias $store;
-    %centralized.download.disabled%autoindex %nginx.autoindex.value%;
-    %centralized.download.disabled%allow all;
-
-    # ── Centralized mode (mode=2 or 3): self-proxy through cache ──
-    %centralized.download.enabled%proxy_pass         http://127.0.0.1:9090/internal-patch-store/;
-    %centralized.download.enabled%%centralized.cache.enabled%proxy_cache        patch_cache;
-    %centralized.download.enabled%%centralized.cache.disabled%proxy_cache        off;
-    %centralized.download.enabled%proxy_cache_valid  200 30d;
-    %centralized.download.enabled%proxy_cache_valid  404 1m;
-    %centralized.download.enabled%proxy_cache_key    $uri;
-    %centralized.download.enabled%proxy_cache_lock          on;
-    %centralized.download.enabled%proxy_cache_lock_timeout  300s;
-    %centralized.download.enabled%add_header X-Cache-Status $cache_status_display always;
-    %centralized.download.enabled%add_header Cache-Control "public, max-age=2592000, immutable" always;
-    %centralized.download.enabled%add_header Content-Disposition "attachment" always;
-    %centralized.download.enabled%proxy_buffering           on;
-    %centralized.download.enabled%proxy_max_temp_file_size  0;
-    %centralized.download.enabled%proxy_connect_timeout     10s;
-    %centralized.download.enabled%proxy_read_timeout        600s;
-    %centralized.download.enabled%proxy_send_timeout        600s;
-    %centralized.download.enabled%gzip off;
-}
-```
-
-### 4.3 Template Placeholders & Mode Mapping
-
-| Placeholder | Mode 1 (Probe) | Mode 2 (SS+Caching) | Mode 3 (SS+Routing) |
-|-------------|----------------|----------------------|---------------------|
-| `%centralized.download.enabled%` | `#` (commented) | (empty, active) | (empty, active) |
-| `%centralized.download.disabled%` | (empty, active) | `#` (commented) | `#` (commented) |
-| `%centralized.cache.enabled%` | `#` | (empty, active) | `#` |
-| `%centralized.cache.disabled%` | `#` | `#` | (empty, active) |
-| `%centralized.cache.max.size%` | N/A | `50` (from SyMParam) | N/A |
-| `%centralized.patch.repo.path%` | N/A | `F:/PatchStore` | `F:/PatchStore` |
-
-**Resolution:** Java writes these to `websettings.conf` → `NginxServerUtils.generateNginxConfFiles()` reads templates → `StartupUtil.findAndReplaceStrings()` substitutes placeholders → final `.conf` files generated at SS/Probe startup.
-
-| X-Cache-Status | Meaning |
-|----------------|---------|
-| `MISS` | Fetched from common store (network share), now cached on Probe disk |
-| `HIT` | Served from local Probe cache |
-| `DISABLED` | Caching off — every request reads from network share |
-
----
-
-## 5. Meta File Structures
-
-### 5.1 Common Store Directory Layout
-
-```
-{ss_common_storedir}/                              (e.g., \\NAS\PatchStore)
-│
-├── .ss-store-sentinel                             ← Sentinel for Probe access validation
-│
-├── KB5001234.msu                                  ← Regular Windows patch (binary)
-├── 400009-mpam-fe-defender-x64.exe                ← Common URL patch (binary)
-├── SharedPatch.exe                                ← Common URL patch (binary)
-│
-├── office/
-│   └── {patchId}/                                 ← Office Click-to-Run patches
-│       ├── setup.exe
-│       └── data/
-│
-├── linux/
-│   ├── redhat-dependencies/
-│   │   └── package.rpm                            ← Red Hat RPM (binary)
-│   ├── ubuntu-dependencies/
-│   │   └── package.deb                            ← Ubuntu DEB (binary)
-│   ├── suse-dependencies/
-│   │   └── package.rpm                            ← SUSE RPM (binary)
-│   ├── debian-dependencies/
-│   │   └── package.deb                            ← Debian DEB (binary)
-│   ├── redhat/dependency/                         ← Linux dep meta XMLs
-│   │   ├── product-dep-101.xml
-│   │   ├── product-dep-102.xml
-│   │   └── ProdDepMetaInfo.xml
-│   ├── ubuntu/dependency/
-│   │   ├── product-dep-201.xml
-│   │   └── ProdDepMetaInfo.xml
-│   ├── suse/dependency/
-│   │   └── ...
-│   └── debian/dependency/
-│       └── ...
-│
-├── deleted-patches/                               ← Delete meta XMLs
-│   ├── windows/
-│   │   └── deleted-patches.xml
-│   ├── mac/
-│   │   └── deleted-patches.xml
-│   └── linux/
-│       ├── deleted-patches.xml
-│       └── deleted-dep-packages.xml
-│
-└── .patch-status/                                 ← Per-patch failure markers (hidden)
-    ├── 102_1.failed                               ← patchId 102, langId 1
-    └── 205_3.failed                               ← patchId 205, langId 3
-```
-
-### 5.2 Per-Probe client-data Layout
-
-```
-{ServerDir}/webapps/DesktopCentral/client-data/patch-resources/
-│
-├── patch-products.zip                             ← Probe-generated (NOT from common store)
-├── windows/download/
-│   ├── Product-205.xml
-│   └── Product-1373.xml
-├── mac/download/
-│   └── Product-{id}.xml
-└── linux/
-    ├── ubuntu/dependency/
-    │   ├── product-dep-300180.xml
-    │   └── proddepmetainfo.xml
-    ├── redhat/dependency/
-    ├── suse/dependency/
-    └── debian/dependency/
-```
-
-### 5.3 XML Schemas & Samples
-
-#### 5.3.1 deleted-patches.xml
-
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<DELETEDFROMSTORE>
-    <DeletedPatch patchid="102" languageid="1" deletion_time="1773896890671"/>
-    <DeletedPatch patchid="205" languageid="3" deletion_time="1773897000000"/>
-</DELETEDFROMSTORE>
-```
-
-Written by: SS `DeferredCleanupTask` (after physical delete)
-Read by: Probe missing-patch scheduler → removes stale `PATCHSTORELOCATION` entries
-
-#### 5.3.2 deleted-dep-packages.xml
-
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<DELETEDDEPENDENCIESFROMSTORE>
-    <DeletedPackage package_id="15" product_id="300180"
-      package_name="old-package_1.0_amd64.deb" deletion_time="1773897100000"/>
-</DELETEDDEPENDENCIESFROMSTORE>
-```
-
-#### 5.3.3 Per-Patch Failure Markers (.failed files)
-
-**Location:** `{commonStore}/.patch-status/{patchId}_{languageId}.failed`
-**Content:** Plain text failure reason string.
-**Example content:** `Checksum mismatch after 3 retries`
-
-**Three-outcome check per patch per poll tick:**
-
-| Check Order | Condition | Outcome |
-|-------------|-----------|---------|
-| 1 | `File.exists(commonStorePath + fileName)` = true | **SUCCESS** — patch available |
-| 2 | `File.exists(commonStorePath + ".patch-status/" + patchId + "_" + langId + ".failed")` = true | **FAILED** — read reason, handle |
-| 3 | Neither exists | **STILL DOWNLOADING** — wait for next tick |
-
-**Lifecycle:**
-
-| Phase | Who | Action |
-|-------|-----|--------|
-| Create | SS (on download failure) | Write `{patchId}_{langId}.failed` with reason |
-| Read | Probe polling scheduler (every 5 min) | `File.exists()` check |
-| Delete | SS (on re-queue or successful re-download) | Remove stale marker |
-| Cleanup | SS `DeferredCleanupTask` | Delete markers older than `2 × on_demand_timeout_minutes` |
-
-#### 5.3.4 Sentinel File (.ss-store-sentinel)
-
-**Location:** `{commonStore}/.ss-store-sentinel`
-
-```json
-{
-    "ssId": "ss-production-01",
-    "timestamp": 1740000000000,
-    "nonce": "abc123def456"
-}
-```
-
-Written by SS during enable-time validation. Read by each Probe to verify correct store access.
-
-### 5.4 File Naming Conventions
-
-| File Type | Pattern | Location |
-|-----------|---------|----------|
-| Regular patch | `{fileName}` (e.g., `KB5001234.msu`) | `{commonStore}/` |
-| Common URL patch | `{patchId}-{fileName}` | `{commonStore}/` |
-| Office Click-to-Run | `{patchId}/` (directory) | `{commonStore}/office/` |
-| Linux RPM/DEB dep | `{packageName}.rpm/.deb` | `{commonStore}/linux/{flavor}-dependencies/` |
-| Dependency meta | `product-dep-{productId}.xml` | `{commonStore}/linux/{flavor}/dependency/` |
-| Dependency index | `ProdDepMetaInfo.xml` | `{commonStore}/linux/{flavor}/dependency/` |
-| Deleted patches meta | `deleted-patches.xml` | `{commonStore}/deleted-patches/{platform}/` |
-| Deleted deps meta | `deleted-dep-packages.xml` | `{commonStore}/deleted-patches/linux/` |
-| Sentinel file | `.ss-store-sentinel` | `{commonStore}/` |
-| Failure marker | `{patchId}_{languageId}.failed` | `{commonStore}/.patch-status/` |
-
-### 5.5 What Lives Where — Summary
-
-#### In the Common Store (all Probes have file-level access)
-
-| Content | Format | Written By | Read By |
-|---------|--------|-----------|---------|
-| Patch binaries (all types) | Binary | SS `SSPatchDownloadService` | Probe Nginx (via self-proxy) |
-| Linux dependency meta XMLs | XML | SS `SSLinuxProductXMLGenerationTask` | Probe (file-level read) |
-| Deleted-patches meta XMLs | XML | SS `DeferredCleanupTask` | Probe missing-patch scheduler |
-| Per-patch failure markers | Plain text | SS (on download failure) | Probe polling scheduler |
-| Sentinel file | JSON | SS (on enable validation) | Probe (access validation) |
-
-#### NOT in Common Store (per-Probe, generated locally)
-
-| Content | Why Not Shared |
-|---------|----------------|
-| `patch-products.zip` | Each Probe generates from local DB — different `PATCHSTORELOCATION` per Probe |
-| `Product-{id}.xml` | Contains Probe-specific `WEBPATH` / `EXTERNAL_DOWNLOAD_URL` |
-| `globalmetadata.xml` | Per-Probe sync timestamps |
-
----
-
-## 6. Settings Propagation Flow
-
-Settings are **pulled** by Probe from SS — no push events.
-
-```
-Admin saves settings on SS
-  ↓
-  ├── 1. PatchStoreCleanupSettings.DOWNLOAD_MODE → DB
-  ├── 2. SyMParameter: common_store_dir, probe_cache_max_size → DB
-  ├── 3. websettings.conf → updated (6 keys)
-  ├── 4. PatchMetaUtil.addOrUpdateCustomerMeta("centralized-download-settings")
-  │      → DCMetaDataUtil.generateCustomerMetaDataForAllManagedCustomers()
-  │      → centralized-download-settings.xml generated
-  └── 5. PatchStoreCleanupXmlGenerator.generateXML()
-         → patch-store-cleanup-settings.xml → MasterRepository (DS propagation)
-
-Probe picks up on next metadata sync cycle (or startup):
-  ↓
-  ├── Read centralized-download-settings.xml (via customer metadata pull)
-  │   OR
-  ├── GET /dcapi/centralizedDownload/settings (direct REST pull at startup)
-  ↓
-  ├── Write DOWNLOAD_MODE to local PatchStoreCleanupSettings
-  ├── Write common_store_dir, probe_cache_max_size to local SyMParameter
-  └── If DOWNLOAD_MODE changed: trigger Nginx config regeneration + reload
-```
-
-**Key constraint:** Enable/disable takes effect on next Probe restart or DB sync cycle. No push events.
-
----
-
-## 7. Reconciliation with Prior LLD Versions
-
-| # | Change | LLD v2 (low-level-design-v2.md) | This LLD v3 | Rationale |
-|---|--------|--------------------------------|-------------|-----------|
-| 1 | **Settings table** | `CentralizedDownloadSettings` (new singleton) | **Eliminated.** `DOWNLOAD_MODE` column on existing `PatchStoreCleanupSettings` + SyMParameter keys. | system-design.md §7.1: existing table has full CRUD + XML propagation. No new infra. |
-| 2 | **Settings API** | Dedicated `/dcapi/centralizedDownload` GET/PUT | **Extended existing** `PATCH_DB/SETTINGS/cleanupSettings` | system-design.md §8.1 |
-| 3 | **Download mode** | Boolean `centralizedDownloadEnabled` + separate cache toggle | **3-way integer** `DOWNLOAD_MODE` (1/2/3) | system-design.md §7.1: caching decision inseparable from download mode. |
-| 4 | **Vendor fallback** | `FALLBACK_TO_VENDOR` column + `/fallbackToVendor/{collectionId}` API | **Eliminated.** No vendor fallback. | system-design.md §13.3, §14: SS failure = deployment failure. No fallback. |
-| 5 | **Collection statuses** | `502` (WAITING_FOR_SS_DOWNLOAD), `503` (PARTIALLY_DEPLOYED) | **No new statuses.** "Draft - Download in progress" throughout. | system-design.md §7.3 |
-| 6 | **CollectionPendingPatches** | New Probe table | **Eliminated.** In-memory `PatchDownloadListener` maps. | system-design.md §7.1 note: startup recovery from collection definition. |
-| 7 | **OnDemandDownloadRequest / OnDemandPatchRequest** | Two SS tables | **Eliminated.** Dedup via `SSPATCHSTORELOCATION.STATUS`. | system-design.md §10.2: no tracking rows needed. |
-| 8 | **Push events** | `PATCH_STORE_UPDATED`, `ON_DEMAND_DOWNLOAD_FAILED`, `CENTRALIZED_DL_SETTINGS_CHANGED`, `PATCH_UPLOAD_STATUS` | **All eliminated.** Pure polling model. | system-design.md §10.3: no push events for centralized download. |
-| 9 | **Settings propagation** | Event push (`CENTRALIZED_DL_SETTINGS_CHANGED`) | **Customer metadata XML** (same pattern as `PatchDBSettings`) | system-design.md §15.1 |
-| 10 | **SSPATCHSTORELOCATION** | Reused Probe `PatchStoreLocation` schema (same column names) | **Dedicated SS table** with clean column names (`PATCH_ID`, `LANGUAGE_ID`, `CHECKSUM_VAL`, etc.) | system-design.md §7.1: purpose-built for SS. Different lifecycle (includes `PENDING_DELETE_AT`). |
-| 11 | **Probe PatchStoreLocation schema** | No changes (correct) | **No changes** (confirmed) | system-design.md §7.2: `WEBPATH` already distinguishes source. |
-| 12 | **Corrupted patch API** | Not in v2 | **Added** `POST /dcapi/centralizedDownload/reportCorrupted` | system-design.md §10.5 UC-1.8: Probe must notify SS of checksum mismatch. |
-| 13 | **Probe access validation API** | Not in v2 | **Added** `POST /dcapi/centralizedDownload/validateProbeAccess` | system-design.md §16.2: sentinel-based validation before enable. |
-| 14 | **Store path change API** | Not in v2 | **Added** `PUT /dcapi/centralizedDownload/changePath` | system-design.md §16.4: validate → migrate → switch. |
-| 15 | **Probe settings pull API** | Not in v2 | **Added** `GET /dcapi/centralizedDownload/settings` | system-design.md §7.4: Probe pulls on startup + post-DB-sync. |
-
+| `fileName` | Text | Target file in
