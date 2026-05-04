@@ -7,6 +7,7 @@
 ## UC-1.1: Deployment-Triggered Download — Patch Not in Common Store
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: POST /patch/manualdeployment"]) --> B["🖥️ PROBE: constructSingleConfigProps<br/>operationType = PATCH_DOWNLOAD_CONFIG_DEPLOY"]
     B --> C["🖥️ PROBE: downloadPatchAndDeploy"]
@@ -52,6 +53,7 @@ flowchart TD
 ## UC-1.2: Agent-Requested Patch Download
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: PatchDownloadTask<br/>agent requests patch not in PSL"]) --> B{"🖥️ PROBE: Centralized<br/>download enabled?"}
     B -->|No| Z(["Legacy vendor download"])
@@ -74,6 +76,7 @@ flowchart TD
 ## UC-1.3: Missing Patch Scheduler — Background Discovery
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: DownloadMissingApprovedPatchTask<br/>fires every 30 min"]) --> B{"🖥️ PROBE: Centralized<br/>download enabled?"}
     B -->|No| Z(["Legacy vendor download path"])
@@ -99,6 +102,7 @@ flowchart TD
 ## UC-1.4: Redownload Triggered for Patch
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: Admin clicks Redownload<br/>PatchDownloadService.reDownloadOfPatches"]) --> B["🖥️ PROBE: Register in listener<br/>isFromManualDownload = true<br/>Send waiting via WebSocket"]
     B --> C{"🖥️ PROBE: Check common store"}
@@ -122,6 +126,7 @@ flowchart TD
 ## UC-1.5: Download Failure on SS
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🌐 SS: Vendor download attempt fails"]) --> B{"🌐 SS: Connection failure?"}
     B -->|"Yes - retry up to 3x"| C["🌐 SS: Retry download"]
@@ -143,6 +148,7 @@ flowchart TD
 ## UC-1.6: Failure Marker Already Exists for Requested Patch
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: Deployment gate encounters<br/>.failed marker for a patch"]) --> B{"🖥️ PROBE: Patch already tracked<br/>in collectionToPatchStatusMap?"}
     B -->|"No - stale marker from previous attempt"| C["🖥️ PROBE: CentralizedDownloadCleanupUtil<br/>.cleanupStalePatch<br/>deletes marker + PSL + local file"]
@@ -162,6 +168,7 @@ flowchart TD
 ## UC-1.7: Patch Already Available — Checksum Valid
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: Deployment gate or<br/>polling scheduler finds file<br/>in common store"]) --> B["🖥️ PROBE: CommonStoreUtil<br/>.isChecksumValid<br/>SHA256 from BINARYCHECKSUMVALUES<br/>MD5 fallback for larger than 4GB"]
     B --> C{"🖥️ PROBE: Valid?"}
@@ -181,6 +188,7 @@ flowchart TD
 ## UC-1.8: Patch Available but Checksum Invalid
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: Checksum mismatch<br/>detected by deployment gate<br/>or polling scheduler"]) --> B["🖥️ PROBE: SSOnDemandDownloadUtil<br/>.reportCorruptedPatch<br/>patchId, langId, collectionId"]
     B --> C["🌐 SS: Delete corrupted file<br/>from common store"]
@@ -198,6 +206,7 @@ flowchart TD
 ## UC-1.9: Download Timeout
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: OnDemandTimeoutTask<br/>walks listener maps"]) --> B{"🖥️ PROBE: elapsed since<br/>downloadStartTime greater than<br/>ON_DEMAND_TIMEOUT_MINUTES?"}
     B -->|No| C(["Continue polling"])
@@ -217,6 +226,7 @@ flowchart TD
 ## UC-2: Download Status Visibility on Probe
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: Admin views download status"]) --> B{"🖥️ PROBE: Source of status data"}
     B --> C["🖥️ PROBE: PatchDownloadListener<br/>.collectionToPatchStatusMap<br/>Per-patch: INITIATED / AVAILABLE / FAILED"]
@@ -236,6 +246,7 @@ flowchart TD
 ## UC-3: RedHat Certificate Forwarding
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: Mode switch to centralized<br/>OR new cert uploaded while centralized"]) --> B["🖥️ PROBE: RedhatCertForwardingService<br/>.forwardCertificatesToSS"]
     B --> C{"🖥️ PROBE: For each edition<br/>workstation, server"}
@@ -257,6 +268,7 @@ flowchart TD
 ## UC-4: SUSE Token Forwarding
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: Mode switch to centralized<br/>OR new product key added while centralized"]) --> B["🖥️ PROBE: SuseTokenForwardingService<br/>.forwardTokensToSS"]
     B --> C["🖥️ PROBE: Read SUSEPRODUCTKEYS<br/>+ SUSEAUTHTOKENS from Probe DB"]
@@ -280,6 +292,7 @@ flowchart TD
 ## UC-5.1: Enable Centralized Download
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🌐 SS: Admin selects summary-caching<br/>or summary-routing in UI"]) --> B["🌐 SS: UI stepper Step 1:<br/>Validate repo path non-empty"]
     B --> C["🌐 SS: POST /centralizedDownloadSettings"]
@@ -304,6 +317,7 @@ flowchart TD
 ## UC-5.2: Disable Centralized Download
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🌐 SS: Admin selects probe mode"]) --> B["🌐 SS: Persist CENTRALIZED_DOWNLOAD_MODE = probe"]
     B --> C["🌐 SS: Update websettings.conf:<br/>centralized.download.enabled = #<br/>centralized.download.disabled = empty"]
@@ -324,6 +338,7 @@ flowchart TD
 ## UC-6: Probe-Side Nginx Caching
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: DS/Agent requests<br/>GET /store/patchFile.exe"]) --> B{"🖥️ PROBE: Nginx proxy_cache<br/>lookup in patch_cache zone"}
     B -->|"HIT"| C["🖥️ PROBE: Serve from local cache disk<br/>X-Cache-Status: HIT<br/>No network I/O"]
@@ -347,6 +362,7 @@ flowchart TD
 ## UC-7.1: Patch Upload from Summary Server
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🌐 SS: Admin uploads patch via SS UI<br/>PatchUploadController.processUploadData"]) --> B["🌐 SS: PatchUploadUtil.processUploadData<br/>File moved to COMMON STORE path"]
     B --> C["🌐 SS: Validate checksum"]
@@ -364,6 +380,7 @@ flowchart TD
 ## UC-7.2: Patch Upload from Probe
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: Admin uploads patch via Probe UI<br/>PatchUploadController.processUploadData"]) --> B{"🖥️ PROBE: Centralized<br/>download enabled?"}
     B -->|No| Z(["Local processing - legacy"])
@@ -384,6 +401,7 @@ flowchart TD
 ## UC-8: Linux Dependency Package Forwarding
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: Linux agent posts<br/>PackageInfoFromAgent via scan"]) --> B["🖥️ PROBE: ScanDataUpdator<br/>.updateDependencyPackages<br/>PACKAGEINFO + PATCHTOPACKAGEREL<br/>populated locally"]
     B --> C{"🖥️ PROBE: Centralized<br/>download enabled?"}
@@ -407,6 +425,7 @@ flowchart TD
 ## UC-9 and UC-18: Common Store Path Change
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🌐 SS: Admin changes path in UI<br/>POST /centralizedDownloadSettings"]) --> B["🌐 SS: Validate new path accessible<br/>write sentinel file"]
     B --> C["🌐 SS: PatchParamUtil.update<br/>CENTRALIZED_PATCH_REPO_PATH = new path"]
@@ -431,6 +450,7 @@ flowchart TD
 ## UC-10: Probe Cache Size Reduced
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🌐 SS: Admin reduces cache limit<br/>e.g. 50 GB to 20 GB"]) --> B["🌐 SS: PatchParamUtil update<br/>CENTRALIZED_CACHE_SIZE_GB = 20"]
     B --> C["🌐 SS: websettings.conf:<br/>centralized.cache.max.size = 20"]
@@ -449,6 +469,7 @@ flowchart TD
 ## UC-11: Probe Cache Size Increased
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🌐 SS: Admin increases cache limit<br/>e.g. 20 GB to 100 GB"]) --> B["Same flow as UC-10:<br/>Update, regen, reload"]
     B --> C["🖥️ PROBE: Nginx sees more headroom<br/>No eviction triggered<br/>More files can be cached"]
@@ -462,6 +483,7 @@ flowchart TD
 ## UC-12: Cache Disabled
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🌐 SS: Admin switches to<br/>summary-routing"]) --> B["🌐 SS: websettings.conf:<br/>centralized.cache.enabled = #<br/>centralized.cache.disabled = empty"]
     B --> C["🌐 SS: Template produces:<br/>proxy_cache off"]
@@ -478,6 +500,7 @@ flowchart TD
 ## UC-13: Patch Cleanup in Centralized Mode
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🌐 SS: CleanupUtil.patchStoreCleanup<br/>scheduled task fires"]) --> B{"🌐 SS: Centralized<br/>download enabled?"}
     B -->|No| Z(["Existing probe-local cleanup"])
@@ -501,6 +524,7 @@ flowchart TD
 ## UC-14: Missing Patch Scheduler in Probe
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: DownloadMissingApprovedPatchTask<br/>existing 30-min scheduler"]) --> B{"🖥️ PROBE: Centralized<br/>download enabled?"}
     B -->|No| Z(["Legacy vendor download path"])
@@ -520,6 +544,7 @@ flowchart TD
 ## UC-15: Patch Deletion — Multi-Probe Safety
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🌐 SS: Cleanup or Admin<br/>requests patch deletion"]) --> B["🌐 SS: CentralizedCleanupUtil<br/>.isSafeToDelete patchId"]
     B --> C["🌐 SS: Query SCOPEAFFPATCHSTATUS<br/>WHERE PATCH_ID = ?<br/>AND STATUS_ID NOT IN<br/>INSTALLED, NOT_APPLICABLE<br/>RANGE 0,1"]
@@ -544,6 +569,7 @@ flowchart TD
 ## UC-16: Centralized to Probe Download
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🌐 SS: Admin selects probe mode<br/>Confirmation dialog shown"]) --> B["🌐 SS: Persist DOWNLOAD_MODE = probe"]
     B --> C["🌐 SS: websettings.conf keys:<br/>centralized.download.enabled = #<br/>centralized.download.disabled = empty"]
@@ -565,6 +591,7 @@ flowchart TD
 ## UC-17: Probe to Centralized Download
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🌐 SS: Admin selects summary-*<br/>Confirmation dialog + warning shown"]) --> B["🌐 SS: Validate store path<br/>+ sentinel check on all Probes"]
     B --> C["🌐 SS: Persist DOWNLOAD_MODE = summary-*"]
@@ -586,6 +613,7 @@ flowchart TD
 ## SS Restart During Active Download
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🌐 SS: Server restarts"]) --> B["🌐 SS: ss-patch-download-data queue<br/>is DB-backed - survives restart"]
     B --> C["🌐 SS: Resumes vendor downloads<br/>from queue on startup"]
@@ -604,6 +632,7 @@ flowchart TD
 ## Probe Restart During Active Download
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: Server restarts"]) --> B["🖥️ PROBE: collectionToPatchStatusMap<br/>lost - in-memory only"]
     B --> C["🖥️ PROBE: Startup recovery:<br/>Query collections in<br/>Draft - Download in progress"]
@@ -623,6 +652,7 @@ flowchart TD
 ## Common Store Temporarily Inaccessible
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart TD
     A(["🖥️ PROBE: Network share/mount<br/>becomes inaccessible"]) --> B["🖥️ PROBE: File.exists returns false<br/>or throws IOException"]
     B --> C["🖥️ PROBE: Polling scheduler:<br/>Neither file nor .failed marker readable<br/>Treated as still downloading"]
@@ -646,6 +676,7 @@ flowchart TD
 ## Master Overview — All Use Cases by Phase
 
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 350, 'nodeSpacing': 30, 'rankSpacing': 50}} }%%
 flowchart LR
     subgraph PhaseA["Phase A: Mode Toggle"]
         UC5["UC-5: Enable/Disable 🌐 SS"]
